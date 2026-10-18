@@ -35,6 +35,7 @@ import {
 import { USER_MESSAGE_ORIGIN_METADATA } from "../impl/messageOrigin.js";
 import { ProjectsModule, type Project, type ProjectEvent } from "../projects/index.js";
 import { ProviderUsageModule } from "../providerUsage/index.js";
+import { reserveRoute } from "./reserveRoute.js";
 import { SchedulingModule } from "../scheduling/index.js";
 import { UserInputModule, type UserInputRequest } from "../userInput/index.js";
 import {
@@ -240,6 +241,8 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
     readonly #scheduling: SchedulingModule;
     readonly #projects: ProjectsModule;
     readonly #providerUsage: ProviderUsageModule;
+    /** Casa fork (18/10/2026): the Claude selection of each conversation the Codex reserve took (reserveRoute.ts). */
+    readonly #movedToReserve = new Map<string, HappySelection>();
     readonly #userInput: UserInputModule;
     readonly #workspaces: WorkspacesModule;
     readonly #taskCatalog: TasksModule;
@@ -1497,6 +1500,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
                 { cause },
             );
         }
+        next = this.#withReserve(ctx, agentId, next);
         const messageOptions = messageOptionsFor(next);
         const content = messageFrom(message);
         const id = createId();
@@ -2709,12 +2713,41 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
         if (model === undefined) {
             throw new Error("Happy cannot start a session without an available model.");
         }
-        return {
+        const selection: HappySelection = {
             effort: model.defaultEffort,
             modelId: model.id,
             permissionMode: this.#config.configuration.values.defaults.permissionMode,
             providerId: model.providerId,
         };
+        // A new conversation starts on the plan with room (reserveRoute.ts).
+        return reserveRoute({
+            selection,
+            models: this.#config.models,
+            typeOf: (id) => this.#config.providerType(id),
+            usage: (id) => this.providerUsage(id),
+        }).selection;
+    }
+
+    /** Casa fork (18/10/2026): Codex answers when every Claude plan is spent, and Claude takes it back after. */
+    #withReserve(ctx: Context, agentId: string, selection: HappySelection): HappySelection {
+        const route = reserveRoute({
+            selection,
+            models: this.#config.models,
+            typeOf: (id) => this.#config.providerType(id),
+            usage: (id) => this.providerUsage(id),
+            movedFrom: this.#movedToReserve.get(agentId),
+        });
+        if (route.movedFrom === undefined) this.#movedToReserve.delete(agentId);
+        else this.#movedToReserve.set(agentId, route.movedFrom);
+        if (route.change !== null) {
+            ctx.log.info("Happy moved a conversation between Claude and the Codex reserve.", {
+                agentId,
+                change: route.change,
+                providerId: route.selection.providerId,
+                modelId: route.selection.modelId,
+            });
+        }
+        return route.selection;
     }
 
     /** Sessions travel on the machine connection without limit, or on capped sockets of their own. */
