@@ -11,6 +11,7 @@ import { computePermissions } from "../../sources/ComputePermissions.js";
 import type { ComputeShell } from "../../sources/ComputeShell.js";
 import { createHostCompute } from "../../sources/host/index.js";
 import { createHostShell } from "../../sources/host/createHostShell.js";
+import { POWERSHELL_UTF8_PREFIX } from "../../sources/processes/impl/shellCommandArgs.js";
 import {
     NativeProcessManager,
     type ProcessRunOptions,
@@ -298,7 +299,7 @@ describe("createHostShell commands", () => {
                           "-NoProfile",
                           "-NonInteractive",
                           "-Command",
-                          "true",
+                          POWERSHELL_UTF8_PREFIX + "true",
                       ]
                     : [
                           "--policy",
@@ -397,7 +398,7 @@ describe("createHostShell commands", () => {
                           "-NoProfile",
                           "-NonInteractive",
                           "-Command",
-                          "true",
+                          POWERSHELL_UTF8_PREFIX + "true",
                       ]
                     : [
                           "--policy",

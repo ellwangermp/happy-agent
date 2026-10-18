@@ -2,6 +2,8 @@
 """MONTAR O HAPPY AGENT DA CASA: o .exe sai deste fork, no notebook, sem Visual Studio.
 
 Desde 17/10/2026 a caixa de areia do Windows também sai daqui (função caixa: o happy.patch com o conserto da casa).
+E os arquivos que a casa muda nos pacotes vão por cima da cópia do npm que o .exe usa (CASA_JS e por_cima); o .exe
+pronto tem de trazer a marca de cada um, senão a montagem para.
 
 Quem usa: ele, que conversa com os bots no Happy do notebook, e toda sessão que muda o Happy Agent por dentro
 (DECISOES.md, 17/10/2026: "mas forkar nos permitiria customizar ele né?" e "faz 1" ao fork).
@@ -38,6 +40,13 @@ SAIDA = AGENTE / "dist" / "bin" / "happy-agent-win32-x64.exe"
 ARQUIVO = Path(r"C:\2nd-Brain\arquivo")
 CODEX = Path(r"C:\2nd-Brain\happy-agent-teste\codex-src")
 SEM_JANELA = 0x08000000   # CREATE_NO_WINDOW: nada pisca na tela dele
+
+# O .exe não usa o código dos pacotes deste fork: usa a cópia do npm da mesma versão (node_modules/.pnpm). Cada arquivo
+# que a casa muda num pacote vai por cima da cópia do npm, e o .exe pronto tem de trazer a marca dele (17/10/2026: o
+# conserto dos acentos passou nas provas do pacote e não chegou ao .exe).
+CASA_JS = [
+    ("happy-agent-compute", "dist/processes/impl/shellCommandArgs.js", b"Get-Content:Encoding"),
+]
 
 # Cada peça: onde mora no fork e como reconhecê-la por dentro (o nome não viaja dentro do .exe).
 PECAS = {
@@ -132,6 +141,29 @@ def caixa():
         print(f"caixa {nome}: sha256 {hashlib.sha256((pacotes[0] / nome).read_bytes()).hexdigest()[:16]}")
 
 
+def por_cima():
+    """Os arquivos da casa (CASA_JS) vão por cima da cópia do npm que o .exe usa."""
+    for pacote, arquivo, marca in CASA_JS:
+        feito = RAIZ / "packages" / pacote / arquivo
+        if marca not in feito.read_bytes():
+            raise SystemExit(f"{feito} não tem a marca {marca!r}: o pnpm build não rodou?")
+        copias = sorted((RAIZ / "node_modules" / ".pnpm").glob(f"@slopus+{pacote}@*/node_modules/@slopus/{pacote}"))
+        if not copias:
+            raise SystemExit(f"não achei a cópia do npm de {pacote}")
+        for copia in copias:
+            temp = copia / (arquivo + ".casa")
+            shutil.copy2(feito, temp)
+            os.replace(temp, copia / arquivo)   # elo com a loja do pnpm: renomear, nunca escrever por cima
+            print(f"por cima: {copia.parent.parent.parent.name}/{arquivo}")
+
+
+def conferir_marcas(exe: Path):
+    dado = exe.read_bytes()
+    falta = [f"{p}/{a}" for p, a, marca in CASA_JS if marca not in dado]
+    if falta:
+        raise SystemExit(f"o .exe montado não traz a mudança da casa em: {falta}")
+
+
 def montar(oficial: Path) -> Path:
     versao = subprocess.run([str(oficial), "--version"], capture_output=True, text=True,
                             creationflags=SEM_JANELA).stdout.strip().split()[-1]
@@ -148,8 +180,10 @@ def montar(oficial: Path) -> Path:
         print(f"peça {nome}: {len(d)} bytes, sha256 {hashlib.sha256(d).hexdigest()[:16]}")
     caixa()
     rodar(["pnpm", "build"])
+    por_cima()
     rodar(["pnpm", "--filter", "@slopus/happy-agent", "build:bun", "--target", "win32-x64"],
           {"HAPPY_AGENT_RELEASE_VERSION": versao})
+    conferir_marcas(SAIDA)
     print(f"montado: {SAIDA} ({hashlib.sha256(SAIDA.read_bytes()).hexdigest()[:16]}), versão {versao}")
     return SAIDA
 
