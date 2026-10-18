@@ -1,5 +1,7 @@
 # -*- coding: utf-8 -*-
-"""MONTAR O HAPPY AGENT DA CASA: o .exe sai deste fork, no notebook, sem Rust nem Visual Studio.
+"""MONTAR O HAPPY AGENT DA CASA: o .exe sai deste fork, no notebook, sem Visual Studio.
+
+Desde 17/10/2026 a caixa de areia do Windows também sai daqui (função caixa: o happy.patch com o conserto da casa).
 
 Quem usa: ele, que conversa com os bots no Happy do notebook, e toda sessão que muda o Happy Agent por dentro
 (DECISOES.md, 17/10/2026: "mas forkar nos permitiria customizar ele né?" e "faz 1" ao fork).
@@ -34,6 +36,7 @@ AGENTE = RAIZ / "packages" / "happy-agent"
 NATIVOS = AGENTE / "native" / "target" / "win32-x64"
 SAIDA = AGENTE / "dist" / "bin" / "happy-agent-win32-x64.exe"
 ARQUIVO = Path(r"C:\2nd-Brain\arquivo")
+CODEX = Path(r"C:\2nd-Brain\happy-agent-teste\codex-src")
 SEM_JANELA = 0x08000000   # CREATE_NO_WINDOW: nada pisca na tela dele
 
 # Cada peça: onde mora no fork e como reconhecê-la por dentro (o nome não viaja dentro do .exe).
@@ -100,6 +103,35 @@ def rodar(cmd: list[str], env: dict | None = None):
         raise SystemExit(f"falhou ({r.returncode}): {' '.join(cmd)}")
 
 
+def caixa():
+    """A caixa de areia do Windows (os 3 programas do supervisor) sai do happy.patch DESTE fork, não do npm.
+
+    O código é o do Codex (openai/codex, commit em native/windows/source.json) com o happy.patch por cima, compilado
+    pelo script da empresa (build-native-windows.mjs) com as MESMAS ferramentas da máquina da empresa: o Rust 1.95 gnu
+    (scoop rustup-gnu) e o gcc do MSYS2 MINGW64 (scoop msys2 + pacman mingw-w64-x86_64-gcc). A cópia do Codex mora em
+    C:/2nd-Brain/happy-agent-teste/codex-src (caminho curto: o Windows barra nome longo)."""
+    cargo = Path.home() / "scoop" / "apps" / "rustup-gnu" / "current" / ".cargo" / "bin"
+    mingw = Path.home() / "scoop" / "apps" / "msys2" / "current" / "mingw64" / "bin"
+    if not (cargo / "cargo.exe").exists() or not (mingw / "gcc.exe").exists():
+        raise SystemExit("falta o Rust ou o gcc: scoop install rustup-gnu msys2; "
+                         "rustup toolchain install 1.95.0-x86_64-pc-windows-gnu --profile minimal; "
+                         "no MSYS2: pacman -Sy --needed mingw-w64-x86_64-gcc")
+    caminho = os.pathsep.join([str(cargo), str(mingw), os.environ["PATH"]])
+    rodar(["node", "packages/happy-agent-supervisor/scripts/build-native-windows.mjs"],
+          {"PATH": caminho, "HAPPY_CODEX_SOURCE_DIR": str(CODEX)})
+    feitos = AGENTE.parent / "happy-agent-supervisor" / "native" / "target" / "release"
+    pacotes = sorted((RAIZ / "node_modules" / ".pnpm").glob(
+        "@slopus+happy-agent-supervisor@*-win32-x64/node_modules/@slopus/happy-agent-supervisor/vendor/x86_64-pc-windows-gnu/bin"))
+    if len(pacotes) != 1:
+        raise SystemExit(f"esperava 1 pacote do supervisor do Windows, achei {len(pacotes)}")
+    for nome in ("happy-agent-supervisor.exe", "happy-sandbox-runner.exe", "happy-sandbox-setup.exe"):
+        # O arquivo do pnpm é um elo (hardlink) com a loja global: troca por renomear, nunca escreve por cima.
+        temp = pacotes[0] / (nome + ".casa")
+        shutil.copy2(feitos / nome, temp)
+        os.replace(temp, pacotes[0] / nome)
+        print(f"caixa {nome}: sha256 {hashlib.sha256((pacotes[0] / nome).read_bytes()).hexdigest()[:16]}")
+
+
 def montar(oficial: Path) -> Path:
     versao = subprocess.run([str(oficial), "--version"], capture_output=True, text=True,
                             creationflags=SEM_JANELA).stdout.strip().split()[-1]
@@ -114,6 +146,7 @@ def montar(oficial: Path) -> Path:
             destino.parent.mkdir(parents=True, exist_ok=True)
             destino.write_bytes(d)
         print(f"peça {nome}: {len(d)} bytes, sha256 {hashlib.sha256(d).hexdigest()[:16]}")
+    caixa()
     rodar(["pnpm", "build"])
     rodar(["pnpm", "--filter", "@slopus/happy-agent", "build:bun", "--target", "win32-x64"],
           {"HAPPY_AGENT_RELEASE_VERSION": versao})
