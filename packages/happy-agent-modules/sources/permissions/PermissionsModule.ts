@@ -9,12 +9,14 @@ import type {
     AgentSystemRef,
     AnyAgentTool,
 } from "@slopus/happy-agent-base";
+import { agentConfig } from "@slopus/happy-agent-base";
 import { Value } from "@sinclair/typebox/value";
 import type { Context } from "@steve.kite/stdlib";
 
 import type { AutoModule } from "../auto/index.js";
 import type { ComputeModule } from "../compute/index.js";
 import { describePermissionAction } from "./impl/describePermissionAction.js";
+import { casaHookRefusal, casaShellCall, loadCasaHooks } from "./impl/casaHooks.js";
 import {
     autoPermissionPolicyDenialReason,
     shouldAllowAutoPermissionReview,
@@ -349,6 +351,20 @@ export class PermissionsModule implements AgentModule {
         const name = toolName(tool);
         const stopped = this.#terminalRefusal(agentId);
         if (stopped !== undefined) return stopped;
+        // Casa fork (18/10/2026): the owner's own PreToolUse hooks (the git guard among them) run
+        // before a bot's shell command in every mode, full access included. See impl/casaHooks.ts.
+        const shell = casaShellCall(name, call.arguments);
+        if (shell !== undefined) {
+            const cwd = shell.cwd ?? agentConfig(ctx)?.environment?.workingDirectory;
+            const reason = await casaHookRefusal(
+                await loadCasaHooks(),
+                cwd === undefined ? shell : { ...shell, cwd },
+                agentId,
+            );
+            if (reason !== undefined) {
+                return this.#toolError(`The owner's guard blocked this command. ${reason}`);
+            }
+        }
         // A tool that cannot be contained by the mode is unavailable, not reviewed. This is a mode
         // constraint, not a review outcome, so — like every non-review path below — it never moves
         // the refusal circuit. Happy Agent v1's circuit advances only on prepared review decisions.
