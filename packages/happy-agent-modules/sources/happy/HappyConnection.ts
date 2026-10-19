@@ -36,6 +36,7 @@ import { USER_MESSAGE_ORIGIN_METADATA } from "../impl/messageOrigin.js";
 import { ProjectsModule, type Project, type ProjectEvent } from "../projects/index.js";
 import { ProviderUsageModule } from "../providerUsage/index.js";
 import { reserveRoute } from "./reserveRoute.js";
+import { saveHappyAttachment } from "./saveHappyAttachment.js";
 import { SchedulingModule } from "../scheduling/index.js";
 import { UserInputModule, type UserInputRequest } from "../userInput/index.js";
 import {
@@ -1502,7 +1503,13 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
         }
         next = this.#withReserve(ctx, agentId, next);
         const messageOptions = messageOptionsFor(next);
-        const content = messageFrom(message);
+        const folder = config.environment?.workingDirectory;
+        const notes: string[] = [];
+        for (const file of message.files ?? []) {
+            if (folder === undefined) break;
+            notes.push(await saveHappyAttachment(folder, file));
+        }
+        const content = messageFrom(message, notes);
         const id = createId();
         const pending: HistoryPendingMessage = {
             ...(this.#connectionOwner === undefined ? {} : { userId: this.#connectionOwner.id }),
@@ -1541,12 +1548,18 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
             if (cause instanceof HappyMessageRefused) throw cause;
             throw new Error("Happy Agent rejected the phone's message.", { cause });
         }
-        this.#scheduling.interruptWaits(ctx, agentId);
-        // Only an accepted message writes the last sent mode, and it stays with the agent rather
-        // than the sender: it is what every composer opened on this session falls back to.
-        await system.updateMetadata(ctx, agentId, {
-            lastMode: modeForSelection(next) as never,
-        });
+        // Casa fork (18/10/2026): the message is in the conversation now. Nothing after this line
+        // may fail the delivery, or the phone's message is handed over again on the next pass.
+        try {
+            this.#scheduling.interruptWaits(ctx, agentId);
+            // Only an accepted message writes the last sent mode, and it stays with the agent rather
+            // than the sender: it is what every composer opened on this session falls back to.
+            await system.updateMetadata(ctx, agentId, {
+                lastMode: modeForSelection(next) as never,
+            });
+        } catch (error) {
+            ctx.log.warn("Happy delivered the message but could not record its mode.", { agentId }, error);
+        }
     }
 
     /** Stops whatever the agent is doing. */
@@ -2931,8 +2944,9 @@ function isUnlinkedIntegration(integration: HappyIntegration): boolean {
     );
 }
 
-function messageFrom(message: HappyInboundMessage): SessionUserMessage {
-    const content: SessionInputBlock[] = structuredClone(message.content ?? []);
+function messageFrom(message: HappyInboundMessage, notes: readonly string[] = []): SessionUserMessage {
+    const content: SessionInputBlock[] = notes.map((text) => ({ text, type: "text" as const }));
+    content.push(...structuredClone(message.content ?? []));
     if (message.content === undefined && (message.text.length > 0 || message.images.length === 0)) {
         content.push({ text: message.text, type: "text" });
     }

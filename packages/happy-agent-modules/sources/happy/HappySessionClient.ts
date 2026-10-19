@@ -33,6 +33,7 @@ import {
 import type { HappyConnectionConfiguration } from "./HappyCredentials.js";
 import {
     HappyMessageRefused,
+    type HappyInboundFile,
     type HappyInboundImage,
     type HappyInboundMessage,
     type HappyModel,
@@ -66,6 +67,8 @@ const RETRY_DELAY_MS = 2_000;
  */
 const REMOTE_SESSION_CLOCK_SKEW_MS = 5 * 60_000;
 const OUTBOX_BATCH = 50;
+/** How many delivered phone messages a client remembers, so a redelivery is recognized. */
+const DELIVERED_MEMORY = 500;
 const INCOMING_PAGE = 100;
 /** A session kicked continuously starts a full pass at most this often. */
 const MIN_SYNC_PASS_INTERVAL_MS = 1_000;
@@ -269,7 +272,14 @@ export class HappySessionClient {
     readonly #closeController = new AbortController();
     readonly #completedQuestions = new Map<string, HappyResolvedCommunication>();
     readonly #questionFirstSeen = new Map<string, number>();
-    readonly #pendingAttachments = new Map<string, Promise<HappyInboundImage | undefined>>();
+    readonly #pendingAttachments = new Map<string, Promise<HappyInboundImage | HappyInboundFile | undefined>>();
+    /**
+     * Casa fork (18/10/2026): the phone messages this client already handed to the agent. On
+     * 18/10/2026 one message with a file was handed over again on every pass for four minutes,
+     * each time saving the file anew and steering the bot off its answer; a message seen here
+     * again is marked read and never given to the agent a second time.
+     */
+    readonly #delivered = new Set<string>();
     #agentStateVersion: number | undefined;
     #avatarClient: HappySessionAvatarClient | undefined;
     #avatarSync: Promise<void> | undefined;
@@ -923,14 +933,27 @@ export class HappySessionClient {
             }
             return false;
         }
+        if (this.#delivered.has(message.id)) {
+            this.#pendingAttachments.clear();
+            this.#options.context.log.warn(
+                "Happy delivered a message Happy Agent already took; it is not given to the agent again.",
+                { remoteMessageId: message.id, seq: message.seq },
+            );
+            return true;
+        }
         const attachments = await Promise.all(this.#pendingAttachments.values());
         this.#pendingAttachments.clear();
         const permissionMode = incoming.selection.permissionMode;
+        const files = attachments.filter(
+            (attachment): attachment is HappyInboundFile => attachment !== undefined && "name" in attachment,
+        );
         try {
             await this.#options.operations.submit(this.#options.context, this.#options.agentId, {
                 images: attachments.filter(
-                    (attachment): attachment is HappyInboundImage => attachment !== undefined,
+                    (attachment): attachment is HappyInboundImage =>
+                        attachment !== undefined && !("name" in attachment),
                 ),
+                ...(files.length === 0 ? {} : { files }),
                 remoteMessageId: happyRemoteMessageId(message.id),
                 selection: {
                     ...(incoming.selection.effort === undefined
@@ -957,7 +980,17 @@ export class HappySessionClient {
             // message queued behind it would wait on one this daemon can never take.
             await this.#reportRefusal(message, error.message);
         }
+        this.#remember(message.id);
         return true;
+    }
+
+    #remember(remoteMessageId: string): void {
+        this.#delivered.add(remoteMessageId);
+        // Only the recent past can come back around; the oldest are let go first.
+        for (const old of this.#delivered) {
+            if (this.#delivered.size <= DELIVERED_MEMORY) break;
+            this.#delivered.delete(old);
+        }
     }
 
     /** Tells the phone, in the conversation, why a message of theirs went nowhere. */
@@ -987,13 +1020,15 @@ export class HappySessionClient {
 
     async #downloadAttachment(
         state: HappySyncSession,
-        attachment: { mimeType?: string; ref: string; size: number },
-    ): Promise<HappyInboundImage | undefined> {
+        attachment: { mimeType?: string; name?: string; ref: string; size: number },
+    ): Promise<HappyInboundImage | HappyInboundFile | undefined> {
         const mimeType = attachment.mimeType ?? "image/jpeg";
-        // Happy Agent can put a picture in front of a model; it cannot do that with a spreadsheet.
-        if (!mimeType.startsWith("image/")) return undefined;
         const decrypted = await this.#downloadAttachmentBytes(state, attachment);
         if (decrypted === undefined) return undefined;
+        // A picture goes in front of the model; any other file (casa fork, 18/10/2026) is saved to the folder.
+        if (!mimeType.startsWith("image/")) {
+            return { data: new Uint8Array(decrypted), mimeType, name: attachment.name ?? "anexo" };
+        }
         return { data: Buffer.from(decrypted).toString("base64"), mimeType };
     }
 

@@ -336,7 +336,7 @@ describe("describing a Happy Agent session in Happy's own terms", () => {
         expect(capabilities.attachments).toEqual({
             enabled: true,
             maxBytes: MAX_HAPPY_ATTACHMENT_BYTES,
-            mediaTypes: ["image/*"],
+            mediaTypes: ["*/*"],
         });
     });
 

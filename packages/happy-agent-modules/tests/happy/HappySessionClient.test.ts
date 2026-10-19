@@ -1253,6 +1253,52 @@ describe("keeping one session in step with Happy", () => {
         await session.close();
     });
 
+    it("hands a file that is not a picture to the agent once, and marks both messages read", async () => {
+        const server = fakeServer();
+        const { calls, operations } = fakeOperations();
+        server.attach("sessions/remote-1/attachments/nota.txt", new TextEncoder().encode("4242"));
+        const redelivery = [
+            remoteMessage(8, "remote-file-1", {
+                role: "session",
+                content: {
+                    type: "session",
+                    data: {
+                        id: "f1",
+                        role: "user",
+                        time: 1,
+                        ev: {
+                            t: "file",
+                            ref: "sessions/remote-1/attachments/nota.txt",
+                            name: "nota.txt",
+                            size: 4,
+                            mimeType: "text/plain",
+                        },
+                    },
+                },
+            }),
+            remoteMessage(9, "remote-message-9", {
+                content: { text: "leia o anexo", type: "text" },
+                role: "user",
+            }),
+        ];
+        server.deliver(redelivery);
+        const session = client({ operations, server, socket: new FakeSocket() });
+        await session.settle();
+        const submits = calls.filter((call) => call.kind === "submit");
+        expect(submits).toHaveLength(1);
+        const message = submits[0]!.detail as { files?: { name: string; data: Uint8Array }[]; images: unknown[] };
+        expect(message.images).toEqual([]);
+        expect(message.files?.map((file) => file.name)).toEqual(["nota.txt"]);
+        expect(new TextDecoder().decode(message.files![0]!.data)).toBe("4242");
+        expect(await sync.readSession(store.context, AGENT_ID)).toMatchObject({ lastRemoteSeq: 9 });
+
+        // 18/10/2026: the same two messages came back on every pass. They are not handed over again.
+        server.deliver(redelivery);
+        await session.settle();
+        expect(calls.filter((call) => call.kind === "submit")).toHaveLength(1);
+        await session.close();
+    });
+
     it("drops a selection naming a permission mode Happy Agent does not have", async () => {
         const server = fakeServer();
         const { calls, operations } = fakeOperations();

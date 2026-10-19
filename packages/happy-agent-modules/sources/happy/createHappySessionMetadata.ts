@@ -168,7 +168,8 @@ export function createHappySessionMetadata(options: {
             attachments: {
                 enabled: true,
                 maxBytes: MAX_HAPPY_ATTACHMENT_BYTES,
-                mediaTypes: ["image/*"],
+                // Casa fork (18/10/2026): any file; what is not a picture is saved to the folder (saveHappyAttachment.ts).
+                mediaTypes: ["*/*"],
             },
             files: {
                 browse: false,

@@ -107,6 +107,9 @@ export class HappyMessageRefused extends Error {
     }
 }
 
+export type { HappyInboundFile } from "./saveHappyAttachment.js";
+import type { HappyInboundFile } from "./saveHappyAttachment.js";
+
 /** One image a person attached on the phone. */
 export interface HappyInboundImage {
     readonly data: string;
@@ -117,6 +120,8 @@ export interface HappyInboundImage {
 export interface HappyInboundMessage {
     readonly content?: HappyInputContent;
     readonly images: readonly HappyInboundImage[];
+    /** Casa fork (18/10/2026): attached files that are not pictures, saved to the folder on submit. */
+    readonly files?: readonly HappyInboundFile[];
     /** Namespaced identity of the remote message, so its echo can be recognized. */
     readonly remoteMessageId: string;
     readonly selection: {
