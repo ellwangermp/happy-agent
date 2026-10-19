@@ -46,6 +46,7 @@ SEM_JANELA = 0x08000000   # CREATE_NO_WINDOW: nada pisca na tela dele
 # conserto dos acentos passou nas provas do pacote e não chegou ao .exe).
 CASA_JS = [
     ("happy-agent-compute", "dist/processes/impl/shellCommandArgs.js", b"Get-Content:Encoding"),
+    ("happy-agent-compute", "dist/sandbox/impl/createToolEnvironment.js", b"HAPPY_CASA_GIT_TRUST"),
 ]
 
 # Cada peça: onde mora no fork e como reconhecê-la por dentro (o nome não viaja dentro do .exe).

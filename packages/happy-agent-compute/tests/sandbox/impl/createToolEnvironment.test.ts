@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { createToolEnvironment } from "../../../sources/sandbox/impl/createToolEnvironment.js";
+import { mkdirSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+import { createToolEnvironment, gitTrustedFolders } from "../../../sources/sandbox/impl/createToolEnvironment.js";
 
 describe("createToolEnvironment", () => {
     it("keeps developer toolchains while removing model-writable search paths", async () => {
@@ -41,6 +45,7 @@ it.runIf(process.platform === "win32")(
             GIT_CONFIG_COUNT: "1",
             GIT_CONFIG_KEY_0: "core.autocrlf",
             GIT_CONFIG_VALUE_0: "false",
+            HAPPY_CASA_GIT_TRUST: "",
         };
         const restricted = await createToolEnvironment("read_only", environment, {
             cwd: "C:\\projects\\selected",
@@ -56,3 +61,14 @@ it.runIf(process.platform === "win32")(
         expect(full.GIT_CONFIG_KEY_1).toBeUndefined();
     },
 );
+
+it("trusts the repository around a working subfolder and the owner's folders (casa fork)", () => {
+    const repo = mkdtempSync(join(tmpdir(), "casa-git-"));
+    mkdirSync(join(repo, ".git"));
+    mkdirSync(join(repo, "forest", "sala"), { recursive: true });
+    const slash = (path: string) => path.replaceAll("\\", "/");
+    expect(gitTrustedFolders(join(repo, "forest", "sala"), { HAPPY_CASA_GIT_TRUST: "C:/VS_Projects/*; C:/2nd-Brain/*" }))
+        .toEqual([slash(join(repo, "forest", "sala")), slash(repo), "C:/VS_Projects/*", "C:/2nd-Brain/*"]);
+    expect(gitTrustedFolders(repo, { HAPPY_CASA_GIT_TRUST: "" })).toEqual([slash(repo)]);
+    expect(gitTrustedFolders(repo, {})).toContain("C:/VS_Projects/*");
+});
