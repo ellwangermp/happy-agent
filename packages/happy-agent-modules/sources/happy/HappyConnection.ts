@@ -36,6 +36,7 @@ import { USER_MESSAGE_ORIGIN_METADATA } from "../impl/messageOrigin.js";
 import { ProjectsModule, type Project, type ProjectEvent } from "../projects/index.js";
 import { ProviderUsageModule } from "../providerUsage/index.js";
 import { reserveRoute } from "./reserveRoute.js";
+import { CasaPlanos, chooseUsage } from "./casaPlanos.js";
 import { saveHappyAttachment } from "./saveHappyAttachment.js";
 import { SchedulingModule } from "../scheduling/index.js";
 import { UserInputModule, type UserInputRequest } from "../userInput/index.js";
@@ -242,6 +243,8 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
     readonly #scheduling: SchedulingModule;
     readonly #projects: ProjectsModule;
     readonly #providerUsage: ProviderUsageModule;
+    /** Casa fork (19/10/2026): the house panel of the five plans, which the Codex reserve decides on (casaPlanos.ts). */
+    readonly #casaPlanos = new CasaPlanos();
     /** Casa fork (18/10/2026): the Claude selection of each conversation the Codex reserve took (reserveRoute.ts). */
     readonly #movedToReserve = new Map<string, HappySelection>();
     readonly #userInput: UserInputModule;
@@ -314,6 +317,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
         this.#history = history;
         this.#projects = projects;
         this.#providerUsage = providerUsage;
+        void this.#casaPlanos.refresh();
         this.#scheduling = scheduling;
         this.#userInput = userInput;
         this.#workspaces = workspaces;
@@ -1308,12 +1312,16 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
         }));
     }
 
-    /** Latest advisory account quota for the provider selected by a Happy session. */
-    providerUsage(providerId: string) {
-        return (
-            this.#providerUsage.list().find((entry) => entry.providerId === providerId)?.usage ??
-            null
-        );
+    /**
+     * Latest advisory account quota for the provider selected by a Happy session. Casa fork (19/10/2026): for Claude
+     * and Codex the house panel speaks first, since Anthropic refuses Happy Agent's own poll (casaPlanos.ts).
+     */
+    providerUsage(providerId: string, agentId?: string) {
+        const own =
+            this.#providerUsage.list().find((entry) => entry.providerId === providerId)?.usage ?? null;
+        const vendor = this.#config.providerType(providerId);
+        if (vendor !== "claude" && vendor !== "codex") return own;
+        return chooseUsage(own, this.#casaPlanos.usage(vendor, providerId, agentId));
     }
 
     /** A bot's existing image; project sessions have no independently published artwork. */
@@ -2743,11 +2751,17 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
 
     /** Casa fork (18/10/2026): Codex answers when every Claude plan is spent, and Claude takes it back after. */
     #withReserve(ctx: Context, agentId: string, selection: HappySelection): HappySelection {
+        if (this.#casaPlanos.error !== null) {
+            ctx.log.warn("The house panel of plans could not be read; the reserve decides on Happy Agent's own reading.", {
+                agentId,
+                error: this.#casaPlanos.error,
+            });
+        }
         const route = reserveRoute({
             selection,
             models: this.#config.models,
             typeOf: (id) => this.#config.providerType(id),
-            usage: (id) => this.providerUsage(id),
+            usage: (id) => this.providerUsage(id, agentId),
             movedFrom: this.#movedToReserve.get(agentId),
         });
         if (route.movedFrom === undefined) this.#movedToReserve.delete(agentId);
