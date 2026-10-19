@@ -1299,6 +1299,53 @@ describe("keeping one session in step with Happy", () => {
         await session.close();
     });
 
+    it("never hands a message over twice when marking it read fails after the agent took it", async () => {
+        // 18/10/2026: the file was saved anew and the bot steered on every pass for four minutes. The
+        // file is saved and the message steered before anything is marked read; when the step after
+        // that failed, the next pass started from the old position and delivered it all again.
+        const server = fakeServer();
+        const { calls, operations } = fakeOperations();
+        server.attach("sessions/remote-1/attachments/nota.txt", new TextEncoder().encode("4242"));
+        const both = [
+            remoteMessage(8, "remote-file-1", {
+                role: "session",
+                content: {
+                    type: "session",
+                    data: {
+                        id: "f1",
+                        role: "user",
+                        time: 1,
+                        ev: {
+                            t: "file",
+                            ref: "sessions/remote-1/attachments/nota.txt",
+                            name: "nota.txt",
+                            size: 4,
+                            mimeType: "text/plain",
+                        },
+                    },
+                },
+            }),
+            remoteMessage(9, "remote-message-9", {
+                content: { text: "leia o anexo", type: "text" },
+                role: "user",
+            }),
+        ];
+        server.deliver(both);
+        const advance = vi
+            .spyOn(sync, "advanceRemoteSequence")
+            .mockRejectedValueOnce(new Error("database is busy"));
+        const session = client({ operations, server, socket: new FakeSocket() });
+        await session.settle().catch(() => undefined);
+        // Happy hands the same two messages over again, as it did that night.
+        server.deliver(both);
+        await session.settle();
+        expect(calls.filter((call) => call.kind === "submit")).toHaveLength(1);
+        expect(advance.mock.calls.length).toBeGreaterThan(1);
+        expect(await sync.readSession(store.context, AGENT_ID)).toMatchObject({ lastRemoteSeq: 9 });
+        advance.mockRestore();
+        await session.close();
+    });
+
     it("drops a selection naming a permission mode Happy Agent does not have", async () => {
         const server = fakeServer();
         const { calls, operations } = fakeOperations();
