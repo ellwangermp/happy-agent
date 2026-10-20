@@ -48,7 +48,8 @@ describe.each([
                 if (source === "configured Claude")
                     fields.push(`oauth_token = "${secret}"`, "credential_isolation = true");
                 if (source === "custom Claude")
-                    fields.push(`config_dir = "${customDirectory}"`, "credential_isolation = true");
+                    // Casa fork (19/10/2026): a Windows path has backslashes, which TOML reads as escapes.
+                    fields.push(`config_dir = ${JSON.stringify(customDirectory)}`, "credential_isolation = true");
                 if (source === "default Claude" || source === "custom Claude") {
                     // Real native credential type/selection; never spawn the SDK or use a keychain.
                     vi.spyOn(ClaudeCodeCredential, "tryLoad").mockImplementation(

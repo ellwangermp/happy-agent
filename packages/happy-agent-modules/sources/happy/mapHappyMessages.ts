@@ -13,6 +13,7 @@ import type {
 import { happyServerMessageId } from "./HappyProtocol.js";
 import { happyToolCallPresentation, normalizeHappyToolCall } from "./normalizeHappyToolCall.js";
 import { MAX_HAPPY_OUTBOX_MESSAGE_CHARACTERS } from "./HappySync.js";
+import { textoDaRota } from "./casaRota.js";
 
 /** How many event ids are remembered so a replayed event is not shown twice. */
 const MAX_REMEMBERED_EVENTS = 16_384;
@@ -325,6 +326,19 @@ export class HappyMessageMapper {
             // Reasoning is private model state. Live sync does not reconstruct it from prose, and
             // a historical replay must not publish it merely because the archive retained it.
             if (block.type === "thinking") continue;
+            // Casa fork (19/10/2026): the route that answered changed; he reads who answers now.
+            if (block.type === "configuration") {
+                output.push(
+                    this.#createMessage({
+                        ev: { t: "service", text: textoDaRota(block.before, block.after) },
+                        id,
+                        role: "agent",
+                        time,
+                        turn,
+                    }),
+                );
+                continue;
+            }
             if (block.type === "tool_call") {
                 output.push(
                     this.#createMessage({

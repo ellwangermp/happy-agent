@@ -142,6 +142,8 @@ it.each(["codex", "grok"] as const)(
         let session: BaseSession | undefined;
         try {
             vi.stubEnv("HOME", root);
+            // Casa fork (19/10/2026): Windows finds the home folder through USERPROFILE.
+            vi.stubEnv("USERPROFILE", root);
             vi.stubEnv("CODEX_HOME", undefined);
             vi.stubEnv("GROK_HOME", undefined);
             vi.stubEnv("OPENAI_API_KEY", undefined);
@@ -225,6 +227,8 @@ it.each(["codex", "grok"] as const)(
         let config: ConfigModule | undefined;
         try {
             vi.stubEnv("HOME", root);
+            // Casa fork (19/10/2026): Windows finds the home folder through USERPROFILE.
+            vi.stubEnv("USERPROFILE", root);
             for (const name of ["CODEX_HOME", "GROK_HOME", "OPENAI_API_KEY", "XAI_API_KEY"])
                 vi.stubEnv(name, undefined);
             expect(homedir()).toBe(root);

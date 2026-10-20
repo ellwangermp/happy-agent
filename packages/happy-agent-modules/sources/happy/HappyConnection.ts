@@ -354,10 +354,14 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
                     ? undefined
                     : await this.#history.message(ctx, event.agentId, event.payload.id);
             const author = accepted === undefined ? undefined : await this.#authorOf(ctx, accepted);
-            const messages = await this.#renderReferences(
-                ctx,
-                attached.mapper.map(event, accepted, author),
-            );
+            const mapped = attached.mapper.map(event, accepted, author);
+            // Casa fork (19/10/2026): when the run settles, the routes History recorded for it
+            // (who answered: provider, model, account) go to the phone before the turn closes.
+            const rota =
+                event.type === "loop.settled"
+                    ? await this.#casaRota(ctx, event.agentId, event.payload, attached.mapper)
+                    : [];
+            const messages = await this.#renderReferences(ctx, [...rota, ...mapped]);
             await this.#sync.projectEvent(ctx, {
                 agentId: event.agentId,
                 eventId: event.id,
@@ -369,6 +373,40 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
             });
         },
     };
+
+    /**
+     * Casa fork (19/10/2026): the `configuration` records History wrote for this run, as the lines
+     * Happy shows ("Quem responde: Claude Opus 5.5, conta ..."). Their ids are the archive's, so a
+     * later history replay of the same record lands on the same outbox row instead of a copy.
+     */
+    async #casaRota(
+        ctx: Context,
+        agentId: string,
+        payload: unknown,
+        mapper: HappyMessageMapper,
+    ): Promise<readonly HappySessionProtocolMessage[]> {
+        const runId = (payload as { runId?: unknown } | undefined)?.runId;
+        if (typeof runId !== "string" || runId.length === 0) return [];
+        try {
+            const page = await this.#history.read(ctx, agentId, {
+                from: "end",
+                limit: 20,
+                roles: ["service"],
+            });
+            const rotas = page.messages
+                .map((record) => record.message)
+                .filter(
+                    (message) =>
+                        message.runId === runId &&
+                        message.blocks.some((block) => block.type === "configuration"),
+                );
+            return rotas.length === 0 ? [] : mapper.mapHistory(rotas);
+        } catch (error) {
+            // Showing who answered is a courtesy beside the conversation; it never blocks it.
+            ctx.log.debug("Happy could not read the run's route records.", { runId }, error);
+            return [];
+        }
+    }
 
     /**
      * Turns the agent's reference tags into plain names and its file links into their labels,

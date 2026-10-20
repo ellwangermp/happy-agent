@@ -6,6 +6,7 @@ export default defineConfig({
             "../../scripts/windowsSandboxTestSetup.ts",
             "../../scripts/isolateHappyTestEnvironment.ts",
             "../../scripts/exitOrphanedTestWorker.ts",
+            "../../scripts/casaWindowsTestCleanup.ts",
         ],
         exclude: ["tests/**/*.live.test.ts"],
         include: ["tests/**/*.test.ts"],

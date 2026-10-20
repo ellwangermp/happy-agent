@@ -264,7 +264,8 @@ describe("starting a catalog-owned Happy Agent session", () => {
         { id: "project-1", kind: "project" },
         { id: "workspace-1", kind: "workspace" },
         { kind: "newWorkspace", projectId: "project-1" },
-        { kind: "projectFolder", projectPath: "/tmp/new-happy-project" },
+        // Casa fork (19/10/2026): an absolute path on the computer the tests run on, Windows included.
+        { kind: "projectFolder", projectPath: join(tmpdir(), "new-happy-project") },
     ] as const)("passes the $kind target to the daemon unchanged", async (target) => {
         const spawn = spawner("remote-1");
 

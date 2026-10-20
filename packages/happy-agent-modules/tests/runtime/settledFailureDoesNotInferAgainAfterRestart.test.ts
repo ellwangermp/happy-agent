@@ -16,7 +16,8 @@ it("the restart-send regression fixture accepts the new user message and sends i
     expect(result.userRequests).toEqual([
         { method: "POST", path: "/v1/responses", sessionId: result.agentId },
     ]);
-});
+    // Casa fork (19/10/2026): the same real runtime as the test below, so the same time budget.
+}, 30_000);
 
 it.fails("maintainer discussion #9: after a settled failure and restart, a new send would make exactly one foreground request (current Base re-answers by design)", async () => {
     const result = await restartSend();

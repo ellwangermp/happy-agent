@@ -4,6 +4,7 @@ import type { BaseProvider, BaseSession, SessionEvent } from "@slopus/happy-prov
 import type { Context } from "@steve.kite/stdlib";
 import type { ProviderExecutionObservations } from "./ProviderExecutionObservations.js";
 import type { CredentialDiagnosticSanitizer } from "./credentialDiagnosticSanitizer.js";
+import { casaContaClaude } from "./casaContaClaude.js";
 
 const observedProviders = new WeakSet<BaseProvider>();
 const observedSessions = new WeakMap<
@@ -44,6 +45,15 @@ export function observeProviderExecution(
         }
         const observation = { diagnostics, descriptor, ambiguous: false };
         observedSessions.set(session, observation);
+        // Casa fork (19/10/2026): the Claude account whose token is in the login file when the
+        // reply starts (casaContaClaude.ts says why that is the proof here); unknown otherwise.
+        const account = (): NonNullable<MessageMode["account"]> | null => {
+            if (providerType !== "claude" || credentialSource?.kind !== "native_login") return null;
+            const configDir = (session as { credential?: { configDir?: string } }).credential
+                ?.configDir;
+            const email = casaContaClaude({ configDir });
+            return email === undefined ? null : { id: `claude:${email}`, label: email };
+        };
         const mode = (
             ctx: Context,
             request: { model?: string; effort?: string; serviceTier?: string },
@@ -56,7 +66,7 @@ export function observeProviderExecution(
                       effort: request.effort ?? agentEffort(ctx) ?? "medium",
                       serviceTier: request.serviceTier ?? agentServiceTier(ctx) ?? null,
                       permissionMode: agentPermissionMode(ctx),
-                      ...(providerType === undefined ? {} : { providerType, account: null }),
+                      ...(providerType === undefined ? {} : { providerType, account: account() }),
                   };
         const run = session.run.bind(session);
         // Preserve ordinary prototype method lookup for scripted adapters that replace their

@@ -374,6 +374,10 @@ describe("McpModule production discovery", () => {
         const { module, root } = await configuredModule({ initial: stdio("initial") });
         const gate = gatedStdio(root, "close-race", "replacement");
         await resolveModuleHooks(ctx, module);
+        // Casa fork (19/10/2026): beforeStart starts the first discovery without waiting for it. Left
+        // running, it could read the replacement below itself, and the reload this test races against
+        // close() would then only start after close() and find the module closed.
+        await module.reload(ctx);
         await write(
             root,
             join(process.platform === "darwin" ? "Happy/Config" : "happy/config", "mcp.toml"),

@@ -1,6 +1,6 @@
 import { mkdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
-import { resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 
 import { Type } from "@sinclair/typebox";
 import { Value } from "@sinclair/typebox/value";
@@ -329,10 +329,12 @@ function resolveDirectory(value: string): string {
     const expanded =
         value === "~"
             ? homedir()
-            : value.startsWith("~/")
+            : value.startsWith("~/") || value.startsWith("~\\")
               ? resolve(homedir(), value.slice(2))
               : value;
-    if (!expanded.startsWith("/")) throw new Error("A session directory must be an absolute path.");
+    // Casa fork (19/10/2026): "C:\..." is absolute on the Windows computer this runs on; only
+    // "/" counted, so every session started from the phone there was refused.
+    if (!isAbsolute(expanded)) throw new Error("A session directory must be an absolute path.");
     return resolve(expanded);
 }
 
