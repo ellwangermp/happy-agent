@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { dirname, join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
@@ -110,7 +110,8 @@ function collectToolDefinitions(root: string): readonly ToolDefinition[] {
                 properties.set("server", "true");
             }
             definitions.push({
-                file: relative(root, file),
+                // Casa fork (20/10/2026): named with "/" on Windows too, as the policy lists them.
+                file: relative(root, file).split(sep).join("/"),
                 line: source.slice(0, start).split("\n").length,
                 properties,
             });

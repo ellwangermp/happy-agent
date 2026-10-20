@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { PassThrough } from "node:stream";
 
 import type { Context } from "@steve.kite/stdlib";
@@ -93,7 +94,8 @@ describe("TerminalsModule", () => {
         await module.create(ctx, { projectId: project.id }, { cwd: "/somewhere/else" });
 
         expect(factory.started.map((options) => options.cwd)).toEqual([
-            `${project.repositoryRef}/packages/thing`,
+            // Casa fork (20/10/2026): joined the way this computer joins paths, Windows included.
+            resolve(project.repositoryRef, "packages/thing"),
             "/somewhere/else",
         ]);
     });

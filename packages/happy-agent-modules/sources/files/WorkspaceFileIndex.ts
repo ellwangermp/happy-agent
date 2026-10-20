@@ -1,4 +1,4 @@
-import { resolve } from "node:path";
+import { resolve, sep } from "node:path";
 
 import type { FileFinder } from "@ff-labs/fff-node";
 
@@ -53,7 +53,7 @@ export class WorkspaceFileIndex {
         if (state === undefined || state.finder.isScanning()) return;
         const result = state.finder.fileSearch(path, { pageSize: 10 });
         if (!result.ok) return;
-        if (!result.value.items.some((item) => item.relativePath === path)) {
+        if (!result.value.items.some((item) => portablePath(item.relativePath) === path)) {
             this.#startScan(state);
         }
     }
@@ -76,7 +76,7 @@ export class WorkspaceFileIndex {
 
         return result.value.items.map((item) => ({
             fileName: item.fileName,
-            path: item.relativePath,
+            path: portablePath(item.relativePath),
         }));
     }
 
@@ -165,4 +165,10 @@ export class WorkspaceFileIndex {
         );
         return await this.#fileFinderConstructor;
     }
+}
+
+// Casa fork (20/10/2026): fff answers with the computer's separator, so on Windows a file came back
+// as "src\main.ts"; the rest of the files module, and Happy, name a project file with "/".
+function portablePath(path: string): string {
+    return sep === "/" ? path : path.split(sep).join("/");
 }

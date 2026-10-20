@@ -6,7 +6,9 @@ const exact = { additionalProperties: false } as const;
 export const skillFolderPathSchema = Type.String({
     minLength: 1,
     maxLength: 4_096,
-    pattern: "^/[^\\u0000\\r\\n]*$",
+    // Casa fork (20/10/2026): a Windows computer names its folders "C:\..."; only "/" was accepted,
+    // so Happy could not add a skill folder there.
+    pattern: "^(?:/|[A-Za-z]:[\\\\/])[^\\u0000\\r\\n]*$",
     description: "The absolute path of a folder whose subdirectories each contain a SKILL.md.",
 });
 

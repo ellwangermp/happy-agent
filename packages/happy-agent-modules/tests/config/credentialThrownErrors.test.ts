@@ -267,7 +267,10 @@ it("withholds a real discovery filesystem exception's selected auth-file path fr
     let fixture: Awaited<ReturnType<typeof diagnosticRuntime>> | undefined;
     try {
         fixture = await diagnosticRuntime(
-            configuration.replace('api_key = "synthetic-private-key"', `auth_file = "${authFile}"`),
+            configuration.replace(
+                'api_key = "synthetic-private-key"',
+                `auth_file = ${JSON.stringify(authFile)}`,
+            ),
         );
         const events: AgentEvent[] = [];
         const agent = fixture.agent!;

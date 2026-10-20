@@ -81,15 +81,18 @@ describe("MenuBarApp", () => {
         const counter = join(root, "runs");
         // The first run counts as started because it lasted beyond the startup window; the second
         // is a fresh first failure, so the app is restarted rather than abandoned.
+        // Casa fork (20/10/2026): Windows takes longer than 100 ms just to start Node, so there every
+        // run outlasted the window; the same story with a window Node's start fits in.
+        const windowMs = process.platform === "win32" ? 2_000 : 100;
         const app = await fakeApp(
             root,
-            `appendFileSync(${JSON.stringify(counter)}, 'x'); if (readFileSync(${JSON.stringify(counter)}).length === 1) await new Promise(r => setTimeout(r, 300)); process.exit(3);`,
+            `appendFileSync(${JSON.stringify(counter)}, 'x'); if (readFileSync(${JSON.stringify(counter)}).length === 1) await new Promise(r => setTimeout(r, ${String(windowMs * 3)})); process.exit(3);`,
         );
 
         const outcome = await new MenuBarApp(process.execPath, [app], {
             maxFailedStarts: 1,
             restartDelayMs: 1,
-            startupWindowMs: 100,
+            startupWindowMs: windowMs,
         }).supervise(context("menu-bar-restart"));
 
         expect(outcome).toBe("abandoned");

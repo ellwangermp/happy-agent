@@ -81,6 +81,9 @@ describe("Bedrock credential_process configuration", () => {
 });
 
 function shellArgument(value: string): string {
+    // Casa fork (20/10/2026): on Windows the AWS SDK runs credential_process through cmd.exe,
+    // which quotes with double quotes; single quotes are a POSIX shell's.
+    if (process.platform === "win32") return `"${value}"`;
     return `'${value.replaceAll("'", `'\\''`)}'`;
 }
 

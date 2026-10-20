@@ -48,7 +48,9 @@ describe("openHappyAgentDatabase", () => {
         const path = join(directory, "agent.sqlite");
         const first = await openHappyAgentDatabase(path);
         try {
-            expect((await stat(`${path}.lock`)).mode & 0o777).toBe(0o600);
+            // Casa fork (20/10/2026): Windows has no file modes; there a file is private by the access list of its folder.
+            if (process.platform !== "win32")
+                expect((await stat(`${path}.lock`)).mode & 0o777).toBe(0o600);
             await expect(openHappyAgentDatabase(path)).rejects.toThrow(
                 "The Happy agent SQLite database is already open in another process.",
             );

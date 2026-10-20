@@ -321,8 +321,11 @@ describe("McpModule production discovery", () => {
     it("retries a server that timed out at startup without a manual reload", async () => {
         const root = await temporaryRoot();
         const gate = gatedStdio(root, "slow-start", "slow");
+        // Casa fork (20/10/2026): on a busy Windows notebook Node alone can take longer than 300 ms
+        // to start, so every retry missed the window; the same story with a window Node's start fits in.
+        const startupTimeoutMs = process.platform === "win32" ? 3_000 : 300;
         const { module } = await configuredModule(
-            { slow: { ...gate.server, startupTimeoutMs: 300 } },
+            { slow: { ...gate.server, startupTimeoutMs } },
             root,
         );
         try {

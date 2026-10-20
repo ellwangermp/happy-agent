@@ -76,9 +76,12 @@ describe("importHappyCredentials", () => {
         expect(await readFile(join(targetHome, "access.key"), "utf8")).toBe(
             `${JSON.stringify(source, null, 2)}\n`,
         );
-        expect((await stat(targetHome)).mode & 0o777).toBe(0o700);
-        expect((await stat(join(targetHome, "access.key"))).mode & 0o777).toBe(0o600);
-        expect((await stat(join(targetHome, "machine.json"))).mode & 0o777).toBe(0o600);
+        // Casa fork (20/10/2026): Windows has no file modes; there a file is private by the access list of its folder.
+        if (process.platform !== "win32") expect((await stat(targetHome)).mode & 0o777).toBe(0o700);
+        if (process.platform !== "win32")
+            expect((await stat(join(targetHome, "access.key"))).mode & 0o777).toBe(0o600);
+        if (process.platform !== "win32")
+            expect((await stat(join(targetHome, "machine.json"))).mode & 0o777).toBe(0o600);
     });
 
     it("keeps a valid local copy when the Happy source is malformed", async () => {

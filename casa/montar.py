@@ -165,7 +165,22 @@ def conferir_marcas(exe: Path):
         raise SystemExit(f"o .exe montado não traz a mudança da casa em: {falta}")
 
 
+def conferir_fim_de_linha():
+    """O código vai ao .exe com os bytes do upstream (LF). O git do Windows troca LF por CRLF ao copiar para a pasta
+    (core.autocrlf=true do Git for Windows), e o texto fixo do programa saía com bytes a mais: o pedido ao revisor de
+    permissões tinha 14000 caracteres em vez de 13889 (20/10/2026). Esta cópia tem core.autocrlf=false; se um arquivo
+    voltar a CRLF, a montagem para."""
+    r = subprocess.run(["git", "-C", str(RAIZ), "ls-files", "--eol", "-z"], capture_output=True,
+                       creationflags=SEM_JANELA)
+    trocados = [linha.split("\t", 1)[1] for linha in r.stdout.decode("utf-8").split("\0")
+                if linha.startswith("i/lf") and "w/crlf" in linha.split("\t", 1)[0]]
+    if r.returncode != 0 or trocados:
+        raise SystemExit(f"{len(trocados)} arquivos de código estão com CRLF na pasta (o primeiro: "
+                         f"{trocados[:1]}); rode git config core.autocrlf false nesta cópia e reescreva-os em LF")
+
+
 def montar(oficial: Path) -> Path:
+    conferir_fim_de_linha()
     versao = subprocess.run([str(oficial), "--version"], capture_output=True, text=True,
                             creationflags=SEM_JANELA).stdout.strip().split()[-1]
     pecas = extrair(oficial)

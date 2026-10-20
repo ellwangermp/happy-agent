@@ -42,8 +42,11 @@ describe("saveHappyPairingCredentials", () => {
             secret: Buffer.alloc(32, 7).toString("base64"),
             token: "happy-token",
         });
-        expect((await stat(settingsPath)).mode & 0o777).toBe(0o600);
-        expect((await stat(credentialsPath)).mode & 0o777).toBe(0o600);
+        // Casa fork (20/10/2026): Windows has no file modes; there a file is private by the access list of its folder.
+        if (process.platform !== "win32")
+            expect((await stat(settingsPath)).mode & 0o777).toBe(0o600);
+        if (process.platform !== "win32")
+            expect((await stat(credentialsPath)).mode & 0o777).toBe(0o600);
     });
 });
 

@@ -162,7 +162,9 @@ async function createFixture(options: { userFolder?: boolean } = {}) {
     await mkdir(folder, { recursive: true });
     const config: ConfigModule = await testConfigRootedAt(
         root,
-        options.userFolder === true ? `[skills]\ndirectories = ["${folder}"]\n` : undefined,
+        options.userFolder === true
+            ? `[skills]\ndirectories = [${JSON.stringify(folder)}]\n`
+            : undefined,
         { environment: { HOME: home } },
     );
     const bots = {

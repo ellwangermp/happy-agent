@@ -204,7 +204,9 @@ describe("the Telegram Bot API client", () => {
             );
 
             expect(await readFile(destination, "utf8")).toBe("picture bytes");
-            expect((await stat(destination)).mode & 0o777).toBe(0o600);
+            // Casa fork (20/10/2026): Windows has no file modes; there a file is private by the access list of its folder.
+            if (process.platform !== "win32")
+                expect((await stat(destination)).mode & 0o777).toBe(0o600);
             expect(requests.map((request) => request.path)).toEqual([
                 `/bot${TOKEN}/getFile`,
                 `/file/bot${TOKEN}/photos/a.jpg`,

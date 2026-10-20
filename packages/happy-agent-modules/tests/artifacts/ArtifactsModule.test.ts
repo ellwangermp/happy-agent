@@ -121,7 +121,9 @@ describe("ArtifactsModule", () => {
         expect(stored.version).toBe(1);
         expect(stored.contentPath).toBe(w.config.artifactContentPath(sha256(chart)));
         expect(new Uint8Array(await readFile(stored.contentPath))).toEqual(chart);
-        expect(((await stat(stored.contentPath)).mode & 0o777).toString(8)).toBe("600");
+        // Casa fork (20/10/2026): Windows has no file modes; there a file is private by the access list of its folder.
+        if (process.platform !== "win32")
+            expect(((await stat(stored.contentPath)).mode & 0o777).toString(8)).toBe("600");
         // Placing the uploads ends them and their owed removals in the same transaction.
         expect(await w.uploadRows()).toBe(0);
         expect(await w.uploadFiles()).toEqual([]);
