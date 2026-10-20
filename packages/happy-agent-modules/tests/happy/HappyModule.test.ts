@@ -15,6 +15,7 @@ import {
     type HappySpawnRequest,
 } from "../../sources/happy/index.js";
 import { createHappyAccountFingerprint } from "../../sources/happy/credentials/createHappyAccountFingerprint.js";
+import { RESEND_NOTE } from "../../sources/happy/casaReenvio.js";
 import { happyIntegrationMigrations } from "../../sources/happy/HappyIntegrationDatabase.js";
 import { moduleDatabase } from "../support/moduleDatabase.js";
 import type { BotRecord } from "../../sources/bots/index.js";
@@ -137,6 +138,8 @@ async function fixture() {
     const projectAgents = new Map<string, string>();
     const workspaceAgents = new Map<string, string>();
     const pendingMessages: Record<string, unknown>[] = [];
+    /** What the provider usage module reports, per provider (casa fork: the reserve reads it). */
+    const usage: { providerId: string; usage: Record<string, unknown> }[] = [];
     const steered: {
         agentId: string;
         config: AgentConfig | undefined;
@@ -321,7 +324,7 @@ async function fixture() {
             },
         } as never,
         projectModule as never,
-        { list: () => [], onChanged: () => () => undefined } as never,
+        { list: () => usage, onChanged: () => () => undefined } as never,
         { interruptWaits: () => undefined } as never,
         {
             latestQuestionAt: async () => activity.questionAt,
@@ -439,6 +442,7 @@ async function fixture() {
         projects,
         releaseHeldWrite: () => releaseWrite?.(),
         steered,
+        usage,
         wornAvatars,
         workspaceAgents,
         workspaces,
@@ -820,6 +824,84 @@ describe("Happy session activity metadata", () => {
             modelId: "retired-model",
             providerId: "retired-provider",
         });
+    });
+
+    it("sends again on the Codex reserve a message Claude refused mid-run for lack of plan (casa, 20/10/2026)", async () => {
+        const test = await fixture();
+        const context = databases.at(-1)!.context;
+        test.configs.set("agent-refused", storedAgent({}));
+        await test.module.submit(context, "agent-refused", {
+            images: [],
+            remoteMessageId: "happy:message-1",
+            selection: { effort: "high", modelId: "anthropic/opus-5", providerId: "claude" },
+            text: "Leia o relatório",
+        });
+        expect(test.steered).toHaveLength(1);
+        expect(test.steered[0]?.options).toMatchObject({ provider: "claude" });
+
+        // Claude refuses in the middle of the run: its own reading says the plan is spent.
+        test.usage.push({
+            providerId: "claude",
+            usage: {
+                capturedAt: Date.now(),
+                credits: null,
+                exhausted: true,
+                planName: null,
+                providerId: "claude",
+                vendor: "claude",
+                windows: { fiveHour: null, monthly: null, weekly: null },
+            },
+        });
+        const event = (type: string, payload: unknown) =>
+            ({ agentId: "agent-refused", id: `${type}-1`, payload, type }) as never;
+        await test.module.eventsListener.onEvent?.(
+            context,
+            event("provider.event", {
+                event: {
+                    kind: "unknown",
+                    message: "You've hit your session limit",
+                    providerError: { type: "rate_limit" },
+                    state: "error",
+                    type: "done",
+                },
+            }),
+        );
+        expect(test.steered).toHaveLength(1);
+        await test.module.eventsListener.onEvent?.(context, event("loop.settled", { runId: "run-1", stopReason: "error" }));
+
+        await vi.waitFor(() => expect(test.steered).toHaveLength(2));
+        expect(test.steered[1]?.options).toMatchObject({ provider: "codex" });
+        expect(test.steered[1]?.options).not.toHaveProperty("metadata.happy");
+        expect((test.steered[1]?.message as { content: unknown[] }).content).toEqual([
+            { text: RESEND_NOTE, type: "text" },
+            { text: "Leia o relatório", type: "text" },
+        ]);
+        // Once: settling again sends nothing more.
+        await test.module.eventsListener.onEvent?.(context, event("loop.settled", { runId: "run-1", stopReason: "error" }));
+        expect(test.steered).toHaveLength(2);
+    });
+
+    it("sends nothing again when Claude failed for another reason (casa, 20/10/2026)", async () => {
+        const test = await fixture();
+        const context = databases.at(-1)!.context;
+        test.configs.set("agent-other", storedAgent({}));
+        await test.module.submit(context, "agent-other", {
+            images: [],
+            remoteMessageId: "happy:message-2",
+            selection: { effort: "high", modelId: "anthropic/opus-5", providerId: "claude" },
+            text: "Oi",
+        });
+        const event = (type: string, payload: unknown) =>
+            ({ agentId: "agent-other", id: `${type}-1`, payload, type }) as never;
+        await test.module.eventsListener.onEvent?.(
+            context,
+            event("provider.event", {
+                event: { kind: "internal_error", message: "boom", providerError: { type: "server" }, state: "error", type: "done" },
+            }),
+        );
+        await test.module.eventsListener.onEvent?.(context, event("loop.settled", { runId: "run-2", stopReason: "error" }));
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        expect(test.steered).toHaveLength(1);
     });
 
     it("makes an accepted message's mode the selection an emptied composer falls back to", async () => {

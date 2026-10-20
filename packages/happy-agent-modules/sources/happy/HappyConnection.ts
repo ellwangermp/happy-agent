@@ -36,6 +36,7 @@ import { USER_MESSAGE_ORIGIN_METADATA } from "../impl/messageOrigin.js";
 import { ProjectsModule, type Project, type ProjectEvent } from "../projects/index.js";
 import { ProviderUsageModule } from "../providerUsage/index.js";
 import { reserveRoute } from "./reserveRoute.js";
+import { ClaudeRefusals, withResendNote, type ClaudeSent } from "./casaReenvio.js";
 import { CasaPlanos, chooseUsage } from "./casaPlanos.js";
 import { saveHappyAttachment } from "./saveHappyAttachment.js";
 import { SchedulingModule } from "../scheduling/index.js";
@@ -247,6 +248,8 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
     readonly #casaPlanos = new CasaPlanos();
     /** Casa fork (18/10/2026): the Claude selection of each conversation the Codex reserve took (reserveRoute.ts). */
     readonly #movedToReserve = new Map<string, HappySelection>();
+    /** Casa fork (20/10/2026): the phone's messages on Claude, sent again on the reserve if Claude refuses mid-run. */
+    readonly #refusals = new ClaudeRefusals<HappySelection>();
     readonly #userInput: UserInputModule;
     readonly #workspaces: WorkspacesModule;
     readonly #taskCatalog: TasksModule;
@@ -339,9 +342,14 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
 
     /** Projects every durable agent event into Happy's outbox. */
     readonly eventsListener: EventsModuleListener = {
-        onEvent: (_ctx: Context, event: AgentEvent): void => {
+        onEvent: (ctx: Context, event: AgentEvent): void => {
             if (event.agentId === undefined) return;
             this.#agents.get(event.agentId)?.client.kick();
+            if (event.type === "provider.event") this.#refusals.providerEvent(event.agentId, event.payload);
+            if (event.type === "loop.settled") {
+                const again = this.#refusals.settled(event.agentId, event.payload);
+                if (again.length > 0) void this.#resendToReserve(this.#context ?? ctx, event.agentId, again);
+            }
         },
         onEventTransactional: async (ctx: Context, event: AgentEvent): Promise<void> => {
             if (event.agentId === undefined) return;
@@ -1548,7 +1556,6 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
             );
         }
         next = this.#withReserve(ctx, agentId, next);
-        const messageOptions = messageOptionsFor(next);
         const folder = config.environment?.workingDirectory;
         const notes: string[] = [];
         for (const file of message.files ?? []) {
@@ -1556,6 +1563,25 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
             notes.push(await saveHappyAttachment(folder, file));
         }
         const content = messageFrom(message, notes);
+        await this.#deliver(ctx, agentId, content, next, message.remoteMessageId);
+        if (this.#config.providerType(next.providerId) === "claude") {
+            this.#refusals.sent(agentId, content, next);
+        }
+    }
+
+    /**
+     * Puts a person's message in the conversation, run with the given selection. Casa fork (20/10/2026): taken out
+     * of submit so the reserve can send again a message Claude refused mid-run.
+     */
+    async #deliver(
+        ctx: Context,
+        agentId: string,
+        content: SessionUserMessage,
+        next: HappySelection,
+        remoteMessageId?: string,
+    ): Promise<void> {
+        const system = this.#system();
+        const messageOptions = messageOptionsFor(next);
         const id = createId();
         const pending: HistoryPendingMessage = {
             ...(this.#connectionOwner === undefined ? {} : { userId: this.#connectionOwner.id }),
@@ -1583,7 +1609,7 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
                     id,
                     metadata: {
                         ...messageOptions.metadata,
-                        happy: { remoteMessageId: message.remoteMessageId },
+                        ...(remoteMessageId === undefined ? {} : { happy: { remoteMessageId } }),
                         ...(this.#connectionOwner === undefined
                             ? {}
                             : { userId: this.#connectionOwner.id }),
@@ -1605,6 +1631,40 @@ export class HappyConnection implements HappySessionOperations, HappySpawnOperat
             });
         } catch (error) {
             ctx.log.warn("Happy delivered the message but could not record its mode.", { agentId }, error);
+        }
+    }
+
+    /**
+     * Casa fork (20/10/2026): Claude refused for lack of plan in the middle of a run. The messages it took since the
+     * run last settled well go again, with a note on top, on the selection the reserve picks now; nothing goes when
+     * the reserve has no room either.
+     */
+    async #resendToReserve(
+        ctx: Context,
+        agentId: string,
+        again: readonly ClaudeSent<HappySelection>[],
+    ): Promise<void> {
+        try {
+            const last = again[again.length - 1]!;
+            const selection = this.#withReserve(ctx, agentId, last.selection);
+            if (this.#config.providerType(selection.providerId) === "claude") {
+                ctx.log.warn("Claude refused for lack of plan and the reserve has no room either; nothing was sent again.", {
+                    agentId,
+                    messages: again.length,
+                });
+                return;
+            }
+            for (const entry of again) {
+                await this.#deliver(ctx, agentId, withResendNote(entry.content), selection);
+            }
+            ctx.log.info("Happy sent again on the reserve the messages Claude refused for lack of plan.", {
+                agentId,
+                messages: again.length,
+                providerId: selection.providerId,
+                modelId: selection.modelId,
+            });
+        } catch (error) {
+            ctx.log.warn("Happy could not send again on the reserve the messages Claude refused.", { agentId }, error);
         }
     }
 
