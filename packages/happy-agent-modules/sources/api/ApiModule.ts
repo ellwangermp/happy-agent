@@ -326,6 +326,7 @@ import {
     projectMessageDiagnostics,
 } from "./projectCredentialDiagnostics.js";
 import { SubtaskInputError, SubtasksModule } from "../subtasks/index.js";
+import { casaAutomaticReserve } from "./casaReserva.js";
 
 const API_PROTOCOL_VERSION = 26;
 
@@ -4521,7 +4522,10 @@ export class ApiModule implements AgentModule {
                 accepted === undefined
                     ? pendingMessageResource(pending)
                     : messageResource(accepted);
-            await this.#updateAgentMetadata(ctx, agentId, { lastMode: body.mode });
+            // Casa fork (21/10/2026): the house's own move to Codex and back is not the person's choice (casaReserva.ts).
+            if (!casaAutomaticReserve(body.clientMetadata)) {
+                await this.#updateAgentMetadata(ctx, agentId, { lastMode: body.mode });
+            }
             this.#journal.append("message.created", {
                 agentId,
                 runId: null,
