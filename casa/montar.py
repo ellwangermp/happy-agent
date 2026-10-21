@@ -47,6 +47,8 @@ SEM_JANELA = 0x08000000   # CREATE_NO_WINDOW: nada pisca na tela dele
 CASA_JS = [
     ("happy-agent-compute", "dist/processes/impl/shellCommandArgs.js", b"Get-Content:Encoding"),
     ("happy-agent-compute", "dist/sandbox/impl/createToolEnvironment.js", b"HAPPY_CASA_GIT_TRUST"),
+    # 21/10/2026: a chave da conversa viva sem serializar as ferramentas inteiras, e o Claude parado que fecha sozinho
+    ("happy-providers", "dist/vendors/claude/ClaudeSession.js", b"casa-claude-tool-wire-1"),
 ]
 
 # Cada peça: onde mora no fork e como reconhecê-la por dentro (o nome não viaja dentro do .exe).

@@ -1,11 +1,16 @@
 import { testContext, testContextWith } from "./testContext.js";
 
-import { Type } from "@sinclair/typebox";
+import { Type, type TSchema } from "@sinclair/typebox";
 import { describe, expect, it, vi } from "vitest";
 
 import type { ProviderUsage } from "@/core/ProviderUsage.js";
 import { ClaudeAuthTokenCredential } from "@/vendors/claude/ClaudeAuthTokenCredential.js";
-import { ClaudeSession, type ClaudeSdkQuery } from "@/vendors/claude/ClaudeSession.js";
+import {
+    CLAUDE_IDLE_QUERY_CLOSE_MS,
+    CLAUDE_MAX_IDLE_QUERIES,
+    ClaudeSession,
+    type ClaudeSdkQuery,
+} from "@/vendors/claude/ClaudeSession.js";
 import { CLAUDE_SDK_PRIVACY_ENVIRONMENT } from "@/vendors/claude/claudeSdkPrivacyEnvironment.js";
 import { collectSessionEvents, textFromSessionEvents } from "./helpers/collectSessionEvents.js";
 
@@ -2331,7 +2336,243 @@ describe("ClaudeSession", () => {
 
         expect(query).toHaveBeenCalledTimes(2);
     });
+
+    // Casa (21/10/2026): the live query's identity serialized every tool whole, 253 MB per step
+    // with the MCP tools' depth-12 JSON value schema, and kept one per session.
+    it("keys the live query by what Claude Code receives, not by the whole tool object", async () => {
+        const credential = await ClaudeAuthTokenCredential.tryLoad({ authToken: "test-token" });
+        if (credential === null) throw new Error("Expected test credential.");
+        const query = vi.fn<ClaudeSdkQuery>(() => fakeLiveToolLoopQuery("CONTINUED"));
+        const value = sharedJsonValueSchema(16);
+        const bash = Object.assign(
+            {
+                name: "Bash",
+                parameters: Type.Object({
+                    command: Type.String(),
+                    arguments: Type.Optional(Type.Record(Type.String(), value)),
+                }),
+            },
+            // Agent tools carry fields of their own that never reach Claude Code.
+            { returnType: Type.Object({ meta: Type.Optional(Type.Record(Type.String(), value)) }) },
+        );
+        expect(JSON.stringify(bash).length).toBeGreaterThan(10_000_000);
+        const session = new ClaudeSession("tool-wire-key-session", {
+            instructions: "",
+            credential,
+            model: "sonnet[1m]",
+            query,
+            tools: [bash],
+        });
+        const user = {
+            role: "user" as const,
+            content: [{ type: "text" as const, text: "Run a command." }],
+        };
+
+        await collectSessionEvents(
+            session.run(testContext, { context: { instructions: "", messages: [user] } }),
+        );
+        const key = (session as unknown as { activeQueryKey: string }).activeQueryKey;
+        const events = await collectSessionEvents(
+            session.run(testContext, {
+                context: {
+                    instructions: "",
+                    messages: [
+                        user,
+                        {
+                            role: "assistant",
+                            content: [
+                                {
+                                    type: "tool_call",
+                                    callId: "call-1",
+                                    name: "Bash",
+                                    arguments: '{"command":"echo done"}',
+                                },
+                            ],
+                        },
+                        {
+                            role: "tool",
+                            content: [{ type: "text" as const, text: "done" }],
+                            callId: "call-1",
+                        },
+                    ] as never,
+                },
+            }),
+        );
+
+        expect(key.length).toBeLessThan(20_000);
+        expect(query).toHaveBeenCalledOnce();
+        expect(textFromSessionEvents(events)).toBe("CONTINUED");
+    });
+
+    it("closes a finished turn's idle query, and the next turn replays into a new one", async () => {
+        vi.useFakeTimers();
+        try {
+            const credential = await ClaudeAuthTokenCredential.tryLoad({
+                authToken: "test-token",
+            });
+            if (credential === null) throw new Error("Expected test credential.");
+            const close = vi.fn();
+            const query = vi.fn<ClaudeSdkQuery>((parameters) =>
+                fakeLiveTextQuery(parameters, close),
+            );
+            const session = new ClaudeSession("idle-close-session", {
+                instructions: "",
+                credential,
+                model: "sonnet[1m]",
+                query,
+                tools: [],
+            });
+            const first = {
+                role: "user" as const,
+                content: [{ type: "text" as const, text: "First." }],
+            };
+            const nextTurn = (text: string) => ({
+                instructions: "",
+                messages: [
+                    ...(session as unknown as { context: { messages: never[] } }).context.messages,
+                    { role: "user" as const, content: [{ type: "text" as const, text }] },
+                ],
+            });
+
+            await collectSessionEvents(
+                session.run(testContext, { context: { instructions: "", messages: [first] } }),
+            );
+            vi.advanceTimersByTime(CLAUDE_IDLE_QUERY_CLOSE_MS - 1);
+            expect(close).not.toHaveBeenCalled();
+            // Inside the idle time the live query takes the next turn.
+            const second = await collectSessionEvents(
+                session.run(testContext, { context: nextTurn("Second.") }),
+            );
+            expect(query).toHaveBeenCalledOnce();
+            expect(textFromSessionEvents(second)).toBe("ANSWER 2");
+
+            vi.advanceTimersByTime(CLAUDE_IDLE_QUERY_CLOSE_MS);
+            expect(close).toHaveBeenCalledOnce();
+            const third = await collectSessionEvents(
+                session.run(testContext, { context: nextTurn("Third.") }),
+            );
+            expect(query).toHaveBeenCalledTimes(2);
+            expect(query.mock.calls[1]?.[0].options?.resume).toBeDefined();
+            expect(textFromSessionEvents(third)).toBe("ANSWER 1");
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("keeps the live query while the turn waits on its tool results", async () => {
+        vi.useFakeTimers();
+        try {
+            const credential = await ClaudeAuthTokenCredential.tryLoad({
+                authToken: "test-token",
+            });
+            if (credential === null) throw new Error("Expected test credential.");
+            const close = vi.fn();
+            const query = vi.fn<ClaudeSdkQuery>(() => fakeToolCallQuery(close));
+            const session = new ClaudeSession("idle-tool-wait-session", {
+                instructions: "",
+                credential,
+                model: "sonnet[1m]",
+                query,
+                tools: [{ name: "Bash", parameters: Type.Object({ command: Type.String() }) }],
+            });
+
+            const events = await collectSessionEvents(
+                session.run(testContext, {
+                    context: {
+                        instructions: "",
+                        messages: [
+                            {
+                                role: "user",
+                                content: [{ type: "text" as const, text: "Run a command." }],
+                            },
+                        ],
+                    },
+                }),
+            );
+            vi.advanceTimersByTime(CLAUDE_IDLE_QUERY_CLOSE_MS * 4);
+
+            expect(events.at(-1)).toMatchObject({ type: "done", state: "tool_call" });
+            expect(close).not.toHaveBeenCalled();
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("closes the longest idle query once more than the cap are idle", async () => {
+        const credential = await ClaudeAuthTokenCredential.tryLoad({ authToken: "test-token" });
+        if (credential === null) throw new Error("Expected test credential.");
+        const closes = Array.from({ length: CLAUDE_MAX_IDLE_QUERIES + 1 }, () => vi.fn());
+        for (const [index, close] of closes.entries()) {
+            const session = new ClaudeSession(`idle-cap-session-${index}`, {
+                instructions: "",
+                credential,
+                model: "sonnet[1m]",
+                query: (parameters) => fakeLiveTextQuery(parameters, close),
+                tools: [],
+            });
+            await collectSessionEvents(
+                session.run(testContext, {
+                    context: {
+                        instructions: "",
+                        messages: [
+                            {
+                                role: "user",
+                                content: [{ type: "text" as const, text: `Turn ${index}.` }],
+                            },
+                        ],
+                    },
+                }),
+            );
+        }
+
+        // Idle queries other tests left behind are older still, so they close before these.
+        expect(closes[0]).toHaveBeenCalledOnce();
+        for (const close of closes.slice(1)) expect(close).not.toHaveBeenCalled();
+    });
 });
+
+/** A JSON value schema whose levels share one child: small in memory, 2^depth when serialized. */
+function sharedJsonValueSchema(depth: number): TSchema {
+    const leaf = Type.Union([Type.String(), Type.Number(), Type.Boolean(), Type.Null()]);
+    let value: TSchema = leaf;
+    for (let level = 0; level < depth; level += 1) {
+        value = Type.Union([
+            leaf,
+            Type.Array(value),
+            Type.Record(Type.String(), value),
+        ]);
+    }
+    return value;
+}
+
+/** A live query that answers every prompt it is handed, numbering its answers. */
+function fakeLiveTextQuery(
+    parameters: Parameters<ClaudeSdkQuery>[0],
+    close: () => void,
+): ReturnType<ClaudeSdkQuery> {
+    async function* messages() {
+        if (typeof parameters.prompt === "string") return;
+        let turn = 0;
+        for await (const _prompt of parameters.prompt) {
+            turn += 1;
+            const text = `ANSWER ${turn}`;
+            yield streamEvent(`live-text-start-${turn}`, {
+                type: "content_block_start",
+                index: 0,
+                content_block: { type: "text", text: "" },
+            });
+            yield streamEvent(`live-text-delta-${turn}`, {
+                type: "content_block_delta",
+                index: 0,
+                delta: { type: "text_delta", text },
+            });
+            yield streamEvent(`live-text-stop-${turn}`, { type: "content_block_stop", index: 0 });
+            yield streamEvent(`live-message-stop-${turn}`, { type: "message_stop" });
+            yield* fakeQuery(text);
+        }
+    }
+    return Object.assign(messages(), { close }) as unknown as ReturnType<ClaudeSdkQuery>;
+}
 
 async function settlesBeforeNextTurn<T>(promise: Promise<T>): Promise<T> {
     return Promise.race([

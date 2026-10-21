@@ -24,6 +24,7 @@ import type { SessionReasoningEffort, SessionRunRequest } from "@/core/SessionRu
 import type { SessionModelConfiguration } from "@/core/SessionModelConfiguration.js";
 import type { SessionTool } from "@/core/SessionTool.js";
 import { waitForInferenceRetry } from "@/core/waitForInferenceRetry.js";
+import { toLlmParametersSchema } from "@/tools/sanitizeSchema.js";
 import { resolveClaudeModelId } from "@/vendors/claude/impl/resolveClaudeModelId.js";
 import type { ClaudeCredential } from "@/vendors/VendorCredential.js";
 import { claudeUsageFromRateLimitInfo } from "@/vendors/claude/claudeUsageFromRateLimitInfo.js";
@@ -59,12 +60,65 @@ const CLAUDE_QUERY_ABORTED = Symbol("claude_query_aborted");
  * so the turn is a normal completion that ends in text rather than a tool call to run.
  */
 const CLAUDE_STRUCTURED_OUTPUT_TOOL_NAME = "StructuredOutput";
+
+/**
+ * Casa (21/10/2026): a live Claude Code process waits between turns with nothing to do, about
+ * 0.35 GB each, and nothing ever closed it; 44 of them held 15 GB of a 39 GB machine. A query
+ * that finished its turn closes after this long without a new one. The next turn starts a fresh
+ * process and replays the conversation, the same path a restart or an abort already takes. Of
+ * the follow-ups measured that day, 88% arrived within 15 minutes.
+ */
+export const CLAUDE_IDLE_QUERY_CLOSE_MS = 15 * 60_000;
+/** Casa: above this many idle live queries in the process, the one idle longest closes first. */
+export const CLAUDE_MAX_IDLE_QUERIES = 8;
+/** The sessions holding an idle live query, oldest first. */
+const idleClaudeSessions = new Set<ClaudeSession>();
+
+/**
+ * Casa (21/10/2026): the live query's identity read every tool whole, so each inference step
+ * serialized the agents' tool objects, extra fields and all: 132 million characters (253 MB) per
+ * step, kept per session, mostly the depth-12 MCP JSON value schema expanded from a shared graph
+ * into a tree. Claude Code only ever receives the declared fields and the sanitized parameters,
+ * so those are the identity, computed once per tool object.
+ */
+const claudeToolWireKeys = new WeakMap<SessionTool, string>();
+
+function claudeToolWireKey(tool: SessionTool): string {
+    const known = claudeToolWireKeys.get(tool);
+    if (known !== undefined) return known;
+    const key = JSON.stringify([
+        "casa-claude-tool-wire-1",
+        tool.name,
+        tool.namespace,
+        tool.namespaceDescription,
+        tool.server,
+        tool.description,
+        tool.searchKeywords,
+        tool.defer,
+        tool.grammar,
+        claudeToolWireParameters(tool),
+    ]);
+    claudeToolWireKeys.set(tool, key);
+    return key;
+}
+
+/** A schema Claude Code would refuse keys by its error; the run reports it when the tools load. */
+function claudeToolWireParameters(tool: SessionTool): unknown {
+    try {
+        return toLlmParametersSchema(tool.parameters);
+    } catch (error) {
+        return { invalid: error instanceof Error ? error.message : String(error) };
+    }
+}
+
 export interface ClaudeSessionOptions extends InferenceRetryOptions {
     instructions: string;
     credential: ClaudeCredential;
     /** The directory Claude Code runs in; defaults to this process's own. */
     cwd?: string;
     env?: NodeJS.ProcessEnv;
+    /** How long a finished turn's live query waits for the next one before closing; 0 keeps it. */
+    idleCloseMs?: number;
     model?: string;
     modelConfigurations?: Readonly<Record<string, SessionModelConfiguration>>;
     /** Receives the account usage the limiter reports during inference. */
@@ -100,6 +154,8 @@ export class ClaudeSession extends BaseSession {
     private activeReplay: ClaudeSessionReplay | undefined;
     private activeToolBridge: ClaudeToolBridge | undefined;
     private lastQueryToolCalls: Omit<SessionToolCallBlock, "type">[] = [];
+    private readonly idleCloseMs: number;
+    private idleTimer: ReturnType<typeof setTimeout> | undefined;
     private readonly onAccountUsage: ((usage: ProviderUsage) => void) | undefined;
     private readonly resolveInferenceMaxRetries: () => number;
     private readonly retryWait: NonNullable<InferenceRetryOptions["waitForInferenceRetry"]>;
@@ -118,6 +174,7 @@ export class ClaudeSession extends BaseSession {
         this.tools = options.tools;
         this.modelConfigurations = options.modelConfigurations;
         this.onAccountUsage = options.onAccountUsage;
+        this.idleCloseMs = options.idleCloseMs ?? CLAUDE_IDLE_QUERY_CLOSE_MS;
         this.query = options.query ?? defaultClaudeSdkQuery;
         this.context = { instructions: options.instructions, messages: [] };
     }
@@ -384,6 +441,7 @@ export class ClaudeSession extends BaseSession {
         model: string;
         structuredOutput?: SessionRunRequest["structuredOutput"];
     }): AsyncGenerator<SessionEvent> {
+        this.cancelIdleClose();
         yield { type: "block_start" };
         const modelConfiguration = this.modelConfigurations?.[options.model];
         const tools = modelConfiguration?.tools ?? this.tools ?? [];
@@ -403,7 +461,7 @@ export class ClaudeSession extends BaseSession {
                 ? {}
                 : { structuredOutput: options.structuredOutput }),
             systemPrompt,
-            tools,
+            tools: tools.map(claudeToolWireKey),
         });
         // Subsumes the older tail check: the live MCP bridge can close a tool batch only while
         // its results remain at the context tail, and requiring the suffix to be exactly that
@@ -971,10 +1029,41 @@ export class ClaudeSession extends BaseSession {
             };
         } finally {
             options.abort?.removeEventListener("abort", abort);
+            this.armIdleClose();
         }
     }
 
+    /**
+     * A query still alive after its turn ended with no tool call waiting is idle: it closes after
+     * `idleCloseMs`, or sooner when more than `CLAUDE_MAX_IDLE_QUERIES` are idle and it is the
+     * oldest. A turn waiting on tool results keeps its query, since the tools are still running.
+     */
+    private armIdleClose(): void {
+        this.cancelIdleClose();
+        if (
+            this.activeQuery === undefined ||
+            this.lastQueryToolCalls.length > 0 ||
+            !(this.idleCloseMs > 0)
+        ) {
+            return;
+        }
+        this.idleTimer = setTimeout(() => this.closeActiveQuery(), this.idleCloseMs);
+        this.idleTimer.unref?.();
+        idleClaudeSessions.add(this);
+        for (const oldest of idleClaudeSessions) {
+            if (idleClaudeSessions.size <= CLAUDE_MAX_IDLE_QUERIES) break;
+            oldest.closeActiveQuery();
+        }
+    }
+
+    private cancelIdleClose(): void {
+        if (this.idleTimer !== undefined) clearTimeout(this.idleTimer);
+        this.idleTimer = undefined;
+        idleClaudeSessions.delete(this);
+    }
+
     private closeActiveQuery(): void {
+        this.cancelIdleClose();
         this.activeToolBridge?.close();
         this.activeToolBridge = undefined;
         this.activePromptQueue?.close();
