@@ -3,6 +3,7 @@
 import { AgentDaemonError } from "./lifecycle/AgentDaemonError.js";
 import { getDaemonIdentity } from "./lifecycle/getDaemonIdentity.js";
 import { isAgentDaemonCommand, runAgentDaemonCommand } from "./lifecycle/runAgentDaemonCommand.js";
+import { installListenerOverflowReport } from "./casaAvisos.js";
 
 /**
  * The `happy-agent` command line: the Happy agent is its own daemon and owns its whole boot
@@ -41,6 +42,8 @@ Commands:
                           Run happy-agent artifact --help for their options.`;
 
 installFailureReporting();
+// Casa fork: the listener-overflow warning names its stream (casaAvisos.ts).
+installListenerOverflowReport();
 
 void main().catch(reportFailure);
 
