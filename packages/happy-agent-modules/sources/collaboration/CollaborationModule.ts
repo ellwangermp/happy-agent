@@ -39,6 +39,7 @@ import { archiveAgentTool } from "./tools/archive_agent.js";
 import { createAgentTool } from "./tools/create_agent.js";
 import { interruptAgentTool } from "./tools/interrupt_agent.js";
 import { sendMessageTool } from "./tools/send_message.js";
+import { isEsteiraCard } from "../subtasks/casaCartao.js";
 
 /**
  * Collaboration lets one agent put another to work.
@@ -362,7 +363,12 @@ export class CollaborationModule implements AgentModule {
                 `Your Agent ID is ${scope.agent.id}.`,
                 `When a file you mention will be read outside your own chat (a message to another agent, a report to your creator, or files from another agent's workspace), link it as [Foo.tsx:42](happy-file://agents/${scope.agent.id}/<path from your workspace root>#L42-L50), percent-encoding spaces and other special characters. For a file elsewhere, use its agent's ID, or happy-file://workspaces/<workspace ID>/<path>. Copy happy-file links you receive unchanged. Otherwise keep writing path:line.`,
             ];
-            if (parent !== null) {
+            if (parent !== null && isCasaCard(scope.agent.metadata)) {
+                // Casa fork (subtasks/casaCartao.ts): the card reports through its own commands, not to the creator.
+                lines.push(
+                    `You were created by agent ${parent} to work one card of the house conveyor. Nothing you say is reported to it: the card's own commands (in the card's mensagem.md) tell the owner and move the card. Message agent ${parent} only when it must decide something for you.`,
+                );
+            } else if (parent !== null) {
                 lines.push(
                     reportsToCreator(scope.agent.metadata)
                         ? `You were created by agent ${parent}. When you stop working, whatever you said last is reported to it automatically, so finish by stating your answer. Use send_agent_message only to tell it something before then.`
@@ -862,6 +868,8 @@ function childConfig(
  * decision survives a restart that forgets everything the creating call held in memory.
  */
 function reportsToCreator(metadata: AgentMetadata | undefined): boolean {
+    // Casa fork: a card of the house conveyor never reports, even one created before its marker existed.
+    if (isCasaCard(metadata)) return false;
     const collaboration = metadata?.["collaboration"];
     if (
         collaboration === null ||
@@ -871,6 +879,24 @@ function reportsToCreator(metadata: AgentMetadata | undefined): boolean {
         return true;
     }
     return collaboration["reportToCreator"] !== false;
+}
+
+/**
+ * Casa fork: a card subtask of the house conveyor (subtasks/casaCartao.ts), by its marker or, for the subtasks opened
+ * before the marker existed (21/10/2026), by its exact card title.
+ */
+function isCasaCard(metadata: AgentMetadata | undefined): boolean {
+    const casa = metadata?.["casa"];
+    if (
+        casa !== null &&
+        typeof casa === "object" &&
+        !Array.isArray(casa) &&
+        (casa as Record<string, unknown>)["cartao"] === true
+    ) {
+        return true;
+    }
+    const title = metadata?.["title"];
+    return metadata?.["subtask"] === true && typeof title === "string" && isEsteiraCard(title);
 }
 
 /** Subtasks stay in their tree but are neither counted collaborators nor a level of depth. */

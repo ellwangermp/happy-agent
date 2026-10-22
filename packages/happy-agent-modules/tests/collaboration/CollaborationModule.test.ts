@@ -1280,6 +1280,19 @@ describe("collaboration", () => {
         expect(instructions).not.toContain("reported to it automatically, so finish");
     });
 
+    it("casa: tells a card of the house conveyor to report through the card", async () => {
+        const collection = new Collection();
+        const { module, hooks, ctx } = await started(collection);
+        const metadata = { ...module.unreportedAgentMetadata(), casa: { cartao: true } };
+        collection.seed("card", "parent", { metadata });
+
+        const instructions = await hooks.instructions!(ctx, { agent: { id: "card", metadata } } as never);
+
+        expect(instructions).toContain("to work one card of the house conveyor");
+        expect(instructions).toContain("Message agent parent only when it must decide something for you.");
+        expect(instructions).not.toContain("reported to it automatically");
+    });
+
     it("tells an agent which collaborators it created", async () => {
         const collection = new Collection();
         const { module, hooks, ctx } = await started(collection);
@@ -1378,6 +1391,20 @@ describe("collaboration", () => {
             text: "Collaborator child finished working. Its answer follows, verbatim.\n\nThe parser change looks correct.",
         });
         expect(collection.steered).toHaveLength(1);
+    });
+
+    it("casa: never reports a card of the house conveyor, even one opened before the card marker", async () => {
+        const collection = new Collection();
+        const { module, hooks, ctx } = await started(collection);
+        await module.createAgent(ctx, "parent", TASK, "child");
+        const scope = runScope("child") as { agent: { id: string; metadata?: unknown } };
+        scope.agent.metadata = { subtask: true, title: "Cartão acfa002333" };
+
+        await hooks.onEventTransact!(ctx, scope as never, textEnd("Feito: o card fechou."));
+        await hooks.afterAgentSettledTransact!(ctx, scope as never, settlement("s1"));
+
+        expect(collection.delivered).toHaveLength(1);
+        expect(collection.steered).toHaveLength(0);
     });
 
     it("does not report an interrupted collaborator's last words to its creator", async () => {

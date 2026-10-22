@@ -108,3 +108,11 @@ Agent ID, to write a file that will be read outside their own chat as
 `[name:line](happy-file://agents/<own ID>/<path>#L…)`, to use another agent's or a workspace's ID
 for files elsewhere, and to copy received links unchanged. Plain `path:line` remains the default
 inside the agent's own chat. The guidance lives here because the Agent ID it builds on does.
+
+## Casa fork: a card of the house conveyor never reports to its creator
+
+A subtask carrying `casa.cartao`, or a subtask whose title is exactly "Cartão <id>" (the cards opened
+before the marker existed), is treated as unreported: settling sends nothing to the creator, and its
+identity prompt says the card's own commands tell the owner, with a message to the creator only when
+it must decide something. The reports woke the bots' main conversations hundreds of times a day for
+nothing (subtasks/casaCartao.ts).

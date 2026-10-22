@@ -99,3 +99,12 @@ A workspace-bound subtask opens a workspace in a project, which a bot kept insid
 not reach. Such a request is refused with an input error before any workspace is made. Subtasks
 that share the bot's folder, and exported-bot conversations, are the bot's own work and are not
 gated, so `#assertCanCreate` itself stays independent of reach.
+
+## Casa fork: a card of the house conveyor reports through the card
+
+The house conveyor asks a bot's own agent to open one subtask per card, titled exactly "Cartão <id>",
+and follows the card itself (the card's commands tell the owner; the conveyor reads the subtask's
+status). The automatic report to the creator was a second channel nobody read: on 21/10/2026, 428
+"finished working" reports woke the bots' main conversations, and runs started by agent messages
+read 28% of the day's input tokens. `create` gives such a subtask the unreported collaboration
+metadata and the `casa.cartao` marker (`casaCartao.ts`); any other title is untouched.

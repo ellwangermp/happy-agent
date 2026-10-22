@@ -40,6 +40,7 @@ import {
     type SubtaskResult,
     type SubtaskStart,
 } from "./Subtask.js";
+import { CASA_CARD_METADATA, isEsteiraCard } from "./casaCartao.js";
 import { subtaskOrderKeyBetween } from "./subtaskOrderKeyBetween.js";
 import { createSubtaskTool } from "./tools/create_subtask.js";
 import { archiveSubtaskTool } from "./tools/archive_subtask.js";
@@ -360,6 +361,10 @@ export class SubtasksModule implements AgentModule {
                           },
                       }),
                 metadata: {
+                    // Casa fork: a card of the esteira reports through the card, not to its creator (casaCartao.ts).
+                    ...(isEsteiraCard(input.title)
+                        ? { ...this.#collaboration.unreportedAgentMetadata(), ...CASA_CARD_METADATA }
+                        : {}),
                     title: input.title,
                     subtask: true,
                     subtaskOrderKey,
