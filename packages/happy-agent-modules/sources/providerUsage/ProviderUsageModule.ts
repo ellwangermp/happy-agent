@@ -13,6 +13,7 @@ import {
 } from "@steve.kite/stdlib";
 
 import { ConfigModule } from "../config/index.js";
+import { casaContasCommand } from "../happy/casaPlanos.js";
 
 export const PROVIDER_USAGE_POLL_INTERVAL_MS = 15 * 60 * 1_000;
 
@@ -122,6 +123,10 @@ export class ProviderUsageModule implements AgentModule {
             // refusal and nothing else, so the poll is skipped until then.
             const retryAt = this.#retryAfter.get(providerId);
             if (retryAt !== undefined && Date.now() < retryAt) return previous;
+            // Casa fork (21/10/2026, GOAL-HAPPY-ROBUSTO item 8): with the house panel on this machine, Claude's plan
+            // is read there (casaPlanos.ts) and every reader asks the panel first. This poll only earned refusals:
+            // 96 "Claude usage returned HTTP 429" from 18/10 to 21/10, each one a warning and no reading.
+            if (this.#skipsPoll(providerId)) return previous;
             try {
                 const usage = await this.#config.readProviderUsage(ctx, providerId);
                 this.#retryAfter.delete(providerId);
@@ -172,6 +177,11 @@ export class ProviderUsageModule implements AgentModule {
         this.#unsubscribe?.();
         this.#unsubscribe = undefined;
         await Promise.allSettled(this.#loops);
+    }
+
+    /** Casa fork: Claude is never polled where the house panel reads its plans (casaPlanos.ts). */
+    #skipsPoll(providerId: string): boolean {
+        return this.#config.providerType(providerId) === "claude" && casaContasCommand() !== null;
     }
 
     #notify(entry: ProviderUsageEntry): void {
