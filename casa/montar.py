@@ -50,6 +50,13 @@ CASA_JS = [
     # 21/10/2026: a chave da conversa viva sem serializar as ferramentas inteiras, e o Claude parado que fecha sozinho
     ("happy-providers", "dist/vendors/claude/ClaudeSession.js", b"casa-claude-tool-wire-1"),
 ]
+# O que a casa muda nos pacotes que o .exe compila deste fork (happy-agent-modules, happy-agent): a marca de cada um
+# tem de estar no .exe pronto. 21/10/2026, GOAL-HAPPY-ROBUSTO: o cartão da esteira (item 3) e o aviso que diz o nome
+# do fluxo (item 5).
+CASA_MARCAS = [b"to work one card of the house conveyor", b"[casa] listener overflow"]
+# Quanto a troca espera o programa em uso parar. O stop drena as rodadas abertas e passou de 120 s em 21/10/2026
+# 17:22 (a troca caiu por tempo e foi feita à mão às 17:32).
+PRAZO_PARAR_S = 15 * 60
 
 # Cada peça: onde mora no fork e como reconhecê-la por dentro (o nome não viaja dentro do .exe).
 PECAS = {
@@ -163,6 +170,7 @@ def por_cima():
 def conferir_marcas(exe: Path):
     dado = exe.read_bytes()
     falta = [f"{p}/{a}" for p, a, marca in CASA_JS if marca not in dado]
+    falta += [m.decode() for m in CASA_MARCAS if m not in dado]
     if falta:
         raise SystemExit(f"o .exe montado não traz a mudança da casa em: {falta}")
 
@@ -211,6 +219,18 @@ def _vivo(exe: Path) -> bool:
     return "not running" not in (r.stdout + r.stderr).lower()
 
 
+def esperar_parar(pedir_stop, vivo, prazo_s: float, dormir=time.sleep, relogio=time.monotonic) -> bool:
+    """Pede o stop sem prazo curto e espera, de 2 em 2 s, até o programa parar ou o prazo acabar. O stop drena as
+    rodadas abertas; quem espera é esta função, não o subprocess (o timeout=120 dele derrubava a troca no meio)."""
+    pedir_stop()
+    fim = relogio() + prazo_s
+    while relogio() < fim:
+        if not vivo():
+            return True
+        dormir(2)
+    return not vivo()
+
+
 def trocar(novo: Path, em_uso: Path):
     """Para o programa em uso, troca o arquivo por renomear e liga de novo como o religar liga."""
     sys.path.insert(0, r"C:\VS_Projects\2nd-brain")
@@ -218,15 +238,14 @@ def trocar(novo: Path, em_uso: Path):
     assert Path(religar.HAPPY_AGENTE) == em_uso, f"o religar liga {religar.HAPPY_AGENTE}, não {em_uso}"
     preparado = em_uso.with_name(em_uso.stem + ".novo.exe")
     shutil.copy2(novo, preparado)
+    conferir_marcas(preparado)      # antes de parar: o que vai rodar traz cada mudança da casa
     guarda = ARQUIVO / f"happy-agent-antes-{datetime.now():%Y-%m-%d-%H%M}"
     guarda.mkdir(parents=True, exist_ok=True)
-    subprocess.run([str(em_uso), "stop"], creationflags=SEM_JANELA, timeout=120)
-    for _ in range(30):
-        if not religar.happy_agente_ok()[0]:
-            break
-        time.sleep(1)
-    else:
-        raise SystemExit("o programa em uso não parou em 30 s; nada foi trocado")
+    parou = esperar_parar(lambda: subprocess.Popen([str(em_uso), "stop"], creationflags=SEM_JANELA),
+                          lambda: religar.happy_agente_ok()[0], PRAZO_PARAR_S)
+    if not parou:
+        preparado.unlink(missing_ok=True)
+        raise SystemExit(f"o programa em uso não parou em {PRAZO_PARAR_S // 60} min; nada foi trocado e ele segue")
     shutil.move(str(em_uso), str(guarda / em_uso.name))
     os.replace(preparado, em_uso)
     print(religar.religar_happy_agente())
