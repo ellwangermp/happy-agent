@@ -9,6 +9,7 @@ import { asyncLock, type AsyncLock, type Context } from "@steve.kite/stdlib";
 import type { HappyAgentConfigValues } from "../config/index.js";
 import type { McpElicitationResult } from "./Mcp.js";
 import { MachineStdioTransport } from "./impl/MachineStdioTransport.js";
+import { casaRaiseMcpStdinCeiling } from "./casaDrain.js";
 
 type ServerConfig = HappyAgentConfigValues["mcpServers"][string];
 type ElicitationHandler = (request: ElicitRequest) => Promise<McpElicitationResult>;
@@ -86,6 +87,7 @@ export class McpClientConnection {
             await client.connect(transport as unknown as Transport, {
                 timeout: config.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS,
             });
+            casaRaiseMcpStdinCeiling(transport); // Casa fork: a burst of sends is not a leak (casaDrain.ts).
             return connection;
         } catch (error) {
             await client.close().catch(() => undefined);
