@@ -5925,6 +5925,27 @@ Errors: `404` when the agent does not exist. `409` with code `conflict` when the
 subtask or is archived, or when `afterId` names the agent itself or anything other than an
 active subtask with the same parent.
 
+### `POST /v0/agents/:agentId/casa-subtask`
+
+Casa fork only (authorized by the owner on 22/10/2026); no published client calls it. The house
+conveyor opens an esteira card's subtask under a bot's own agent itself, instead of asking that
+agent's conversation to call `create_subtask`.
+
+Request: `{ "id": "ccef24d4138t1", "title": "Cartão cef24d4138", "text": "...", "model":
+"anthropic/opus-5-5", "effort": "high", "provider": "claude" }`. `id` is the new subtask's agent
+ID, chosen by the caller (2 to 32 characters, a lowercase letter then lowercase letters or
+digits); `title` must be exactly `Cartão <id>`; `text` is the subtask's opening task; `provider`
+is optional. No other field is accepted.
+
+Response — `201`: `{ "agentId": "ccef24d4138t1" }`. The subtask is created exactly as
+`create_subtask` creates it, with the same eligibility, depth limit, unreported card marker, and
+opening task. A repeated request with the same `id` returns the subtask that already exists and
+creates nothing.
+
+Errors: `400` with code `invalid_request` when the body is invalid or the title is not an esteira
+card. `404` when the agent does not exist. `409` with code `conflict` when the daemon has no
+subtasks or the agent cannot create this subtask.
+
 ### `GET /v0/agents/:agentId/draft`
 
 Returns the current composer draft as separate current state. A draft is the text plus the exact

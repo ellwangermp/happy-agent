@@ -327,6 +327,7 @@ import {
 } from "./projectCredentialDiagnostics.js";
 import { SubtaskInputError, SubtasksModule } from "../subtasks/index.js";
 import { casaAutomaticReserve } from "./casaReserva.js";
+import { casaCardSubtask, casaCardSubtaskBodySchema } from "./casaSubtarefa.js";
 
 const API_PROTOCOL_VERSION = 26;
 
@@ -3916,7 +3917,7 @@ export class ApiModule implements AgentModule {
             return true;
         }
         const action =
-            /^\/v0\/agents\/([a-z][a-z0-9]*)\/(send|messages|question|abort|compact|read|archive|unarchive|reorder|subtask-reorder|draft|usage|mode|bootstrap|activity)$/.exec(
+            /^\/v0\/agents\/([a-z][a-z0-9]*)\/(send|messages|question|abort|compact|read|archive|unarchive|reorder|subtask-reorder|casa-subtask|draft|usage|mode|bootstrap|activity)$/.exec(
                 url.pathname,
             );
         if (action !== null) {
@@ -4134,6 +4135,15 @@ export class ApiModule implements AgentModule {
                     );
                 }
                 sendJson(response, 200, await this.#focusedAgentResponse(ctx, agentId));
+                return true;
+            }
+            // Casa fork: the esteira opens a card's subtask itself (casaSubtarefa.ts).
+            if (operation === "casa-subtask" && request.method === "POST") {
+                const body = await bodyAs(request, casaCardSubtaskBodySchema, "card subtask");
+                if ((await this.#agentSystem().config(ctx, agentId)) === undefined) {
+                    throw notFound("The agent was not found.");
+                }
+                sendJson(response, 201, await casaCardSubtask(ctx, this.#subtasks, agentId, body));
                 return true;
             }
             if (operation === "subtask-reorder" && request.method === "POST") {
