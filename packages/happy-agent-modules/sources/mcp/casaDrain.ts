@@ -16,12 +16,17 @@ export const CASA_MCP_STDIN_LISTENERS = 256;
 
 type ListenerCeiling = { setMaxListeners(n: number): unknown; getMaxListeners(): number };
 
-/** Raises the drain-listener ceiling on a stdio MCP transport's server stdin; any other transport is left alone. */
-export function casaRaiseMcpStdinCeiling(transport: unknown): boolean {
+/**
+ * Raises the drain-listener ceiling on a stdio MCP transport's server stdin; any other transport is left alone. The
+ * stdin also gets the server's name (casaMcpServer), so an overflow past the ceiling names the server that stopped
+ * reading (22/10/2026: 257 drain listeners on one stdin, and the warning could not say whose).
+ */
+export function casaRaiseMcpStdinCeiling(transport: unknown, server?: string): boolean {
     const stdin = (transport as { _process?: { stdin?: Partial<ListenerCeiling> | null } } | null)
         ?._process?.stdin;
     if (typeof stdin?.setMaxListeners !== "function" || typeof stdin.getMaxListeners !== "function")
         return false;
+    if (server !== undefined) (stdin as { casaMcpServer?: string }).casaMcpServer = server;
     if (stdin.getMaxListeners() >= CASA_MCP_STDIN_LISTENERS) return false;
     stdin.setMaxListeners(CASA_MCP_STDIN_LISTENERS);
     return true;

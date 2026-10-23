@@ -54,7 +54,9 @@ CASA_JS = [
 # tem de estar no .exe pronto. 21/10/2026, GOAL-HAPPY-ROBUSTO: o cartão da esteira (item 3) e o aviso que diz o nome
 # do fluxo (item 5). 22/10/2026: a esteira abre a subtarefa do cartão ela mesma (item 22).
 CASA_MARCAS = [b"to work one card of the house conveyor", b"[casa] listener overflow",
-               b"opens through this route"]
+               b"opens through this route", b"[casa] memory",
+               # 22/10/2026: as provas da casa antes do comando de um bot rodam juntas e a espera longa é recusada
+               b"the house refuses waits of"]
 # Quanto a troca espera o programa em uso parar. O stop drena as rodadas abertas e passou de 120 s em 21/10/2026
 # 17:22 (a troca caiu por tempo e foi feita à mão às 17:32).
 PRAZO_PARAR_S = 15 * 60

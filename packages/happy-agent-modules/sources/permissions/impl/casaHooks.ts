@@ -171,6 +171,8 @@ export async function casaHookRefusal(
     agentId: string,
     run: CasaHookRunner = runCasaHookCommand,
 ): Promise<string | undefined> {
+    const sleep = casaLongSleep(call.command);
+    if (sleep !== undefined) return sleep;
     const input = JSON.stringify({
         session_id: agentId,
         hook_event_name: "PreToolUse",
@@ -178,17 +180,55 @@ export async function casaHookRefusal(
         tool_input: { command: call.command },
         ...(call.cwd === undefined ? {} : { cwd: call.cwd }),
     });
-    for (const group of groups) {
-        if (!group.matcher.test(call.toolName)) continue;
-        for (const hook of group.hooks) {
-            const answer = await run(hook.command, input, hook.timeoutMs);
-            if (answer.code === 2) return answer.stderr.trim() || "A guard hook blocked this command.";
-            if (answer.code !== 0) continue;
-            const reason = denyReason(answer.stdout);
-            if (reason !== undefined) return reason;
-        }
+    // Like Claude Code, every matching hook runs at once (22/10/2026: one by one, the two guards of a shell command
+    // took 0.33 s against 0.25 s together, on a notebook at 100% CPU); the first refusal in settings order wins.
+    const hooks = groups.filter((group) => group.matcher.test(call.toolName)).flatMap((group) => group.hooks);
+    const answers = await Promise.all(hooks.map((hook) => run(hook.command, input, hook.timeoutMs)));
+    for (const answer of answers) {
+        if (answer.code === 2) return answer.stderr.trim() || "A guard hook blocked this command.";
+        if (answer.code !== 0) continue;
+        const reason = denyReason(answer.stdout);
+        if (reason !== undefined) return reason;
     }
     return undefined;
+}
+
+/** The longest wait a bot's shell command may hold in one sleep. */
+export const CASA_MAX_SLEEP_S = 60;
+
+const SLEEP_PATTERNS: readonly { readonly pattern: RegExp; readonly seconds: (match: RegExpExecArray) => number }[] = [
+    // PowerShell: Start-Sleep 600, Start-Sleep -Seconds 600, Start-Sleep -s 600, sleep -Milliseconds 90000
+    {
+        pattern: /\b(?:Start-Sleep|sleep)\s+(?:-(?:Seconds|s)\s*:?\s*)?(\d+(?:\.\d+)?)(?![\w.])/gi,
+        seconds: (match) => Number(match[1]),
+    },
+    {
+        pattern: /\b(?:Start-Sleep|sleep)\s+-(?:Milliseconds|m)\s*:?\s*(\d+(?:\.\d+)?)/gi,
+        seconds: (match) => Number(match[1]) / 1000,
+    },
+    // POSIX sleep with a unit: sleep 10m, sleep 1h, sleep 90s
+    {
+        pattern: /\bsleep\s+(\d+(?:\.\d+)?)([smhd])\b/gi,
+        seconds: (match) => Number(match[1]) * { s: 1, m: 60, h: 3600, d: 86400 }[match[2]!.toLowerCase() as "s"],
+    },
+];
+
+/**
+ * Why a shell command that sleeps 60 s or more is refused, or nothing. 22/10/2026: bots held their card and a shell
+ * for minutes in one Start-Sleep while the owner's notebook ran at 100%; a short check loop or ending the turn does
+ * the same wait without it.
+ */
+export function casaLongSleep(command: string): string | undefined {
+    let longest = 0;
+    for (const { pattern, seconds } of SLEEP_PATTERNS) {
+        for (const match of command.matchAll(pattern)) longest = Math.max(longest, seconds(match));
+    }
+    if (longest < CASA_MAX_SLEEP_S) return undefined;
+    return (
+        `This command sleeps ${longest} s in one go; the house refuses waits of ${CASA_MAX_SLEEP_S} s or more. ` +
+        "To wait for something, check for it in a loop with short sleeps (under 60 s) and a clear exit condition, " +
+        "or finish this turn and let the conveyor bring the card back when the result is there."
+    );
 }
 
 function denyReason(stdout: string): string | undefined {

@@ -23,6 +23,7 @@ export function describeListenerOverflow(warning: Error): string | undefined {
         emitter?.["path"] !== undefined ? `path=${String(emitter["path"])}` : "",
         emitter?.["fd"] !== undefined && emitter["fd"] !== null ? `fd=${String(emitter["fd"])}` : "",
         emitter?.["spawnfile"] !== undefined ? `child=${String(emitter["spawnfile"])}` : "",
+        emitter?.["casaMcpServer"] !== undefined ? `mcp=${String(emitter["casaMcpServer"])}` : "",
         `event=${type}`,
         `count=${String(overflow.count ?? "?")}`,
     ].filter(Boolean);
@@ -35,6 +36,35 @@ export function describeListenerOverflow(warning: Error): string | undefined {
     }
     const stack = (warning.stack ?? "").split("\n").slice(1, 9).map((line) => line.trim()).join(" | ");
     return `[casa] listener overflow: ${where.join(" ")} newest=${JSON.stringify(newest)} at ${stack}`;
+}
+
+/** How often the daemon writes its memory line. */
+export const CASA_MEMORY_EVERY_MS = 10 * 60_000;
+
+/**
+ * One line with the process memory, in MB. 22/10/2026: happy-agent.exe held 5.3 GB of committed memory with 1.9 GB in
+ * RAM, in steps (1.0 GB at 10:27, 4.2 GB at 12:57, 5.4 GB at 21:07) and flat between them; from outside the process
+ * nobody could tell the JavaScript heap from memory the allocator kept after a peak. The line tells them apart.
+ */
+export function describeMemory(usage: NodeJS.MemoryUsage, now: Date = new Date()): string {
+    const mb = (bytes: number) => Math.round(bytes / 1048576);
+    return (
+        `[casa] memory ${now.toISOString()} rss=${mb(usage.rss)}MB heapUsed=${mb(usage.heapUsed)}MB ` +
+        `heapTotal=${mb(usage.heapTotal)}MB external=${mb(usage.external)}MB arrayBuffers=${mb(usage.arrayBuffers)}MB`
+    );
+}
+
+/** Writes the memory line to stderr every CASA_MEMORY_EVERY_MS; the timer never keeps a short command alive. */
+export function installMemoryReport(every: number = CASA_MEMORY_EVERY_MS): ReturnType<typeof setInterval> {
+    const timer = setInterval(() => {
+        try {
+            process.stderr.write(`${describeMemory(process.memoryUsage())}\n`);
+        } catch {
+            // The line is only a clue.
+        }
+    }, every);
+    timer.unref?.();
+    return timer;
 }
 
 /** Writes the naming line to stderr next to the default warning. */

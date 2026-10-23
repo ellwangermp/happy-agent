@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import {
     casaHookRefusal,
     casaHooksPath,
+    casaLongSleep,
     casaShellCall,
     loadCasaHooks,
     parseCasaHooks,
@@ -78,6 +79,53 @@ describe("casaHooks: the owner's Claude Code guards, before a bot's shell comman
         expect(await at("slow hook")).toBeUndefined();
         // Only the hooks whose matcher takes the tool ran: never the Write one.
         expect(seen.every((command) => command === "guard")).toBe(true);
+    });
+
+    it("runs every matching hook at once and keeps the settings order for the refusal", async () => {
+        const groups = parseCasaHooks({
+            hooks: {
+                PreToolUse: [
+                    { matcher: "Bash", hooks: [{ type: "command", command: "slow-allow" }, { type: "command", command: "deny-1" }] },
+                    { matcher: "Bash|PowerShell", hooks: [{ type: "command", command: "deny-2" }] },
+                ],
+            },
+        });
+        let running = 0;
+        let most = 0;
+        const run: CasaHookRunner = async (command) => {
+            running += 1;
+            most = Math.max(most, running);
+            await new Promise((resolve) => setTimeout(resolve, command === "slow-allow" ? 50 : 5));
+            running -= 1;
+            return command === "slow-allow"
+                ? { code: 0, stdout: "", stderr: "" }
+                : { code: 2, stdout: "", stderr: command };
+        };
+        expect(await casaHookRefusal(groups, { toolName: "Bash", command: "ls" }, "a1", run)).toBe("deny-1");
+        expect(most).toBe(3);
+    });
+
+    it("refuses a sleep of 60 s or more before any hook runs", async () => {
+        expect(casaLongSleep("Start-Sleep -Seconds 600")).toMatch(/sleeps 600 s/);
+        expect(casaLongSleep("Start-Sleep 90; Get-Content x")).toMatch(/sleeps 90 s/);
+        expect(casaLongSleep("Start-Sleep -s 60")).toMatch(/sleeps 60 s/);
+        expect(casaLongSleep("Start-Sleep -Milliseconds 120000")).toMatch(/sleeps 120 s/);
+        expect(casaLongSleep("sleep 300 && cat log")).toMatch(/sleeps 300 s/);
+        expect(casaLongSleep("sleep 10m")).toMatch(/sleeps 600 s/);
+        expect(casaLongSleep("until test -f done; do sleep 20; done")).toBeUndefined();
+        expect(casaLongSleep("Start-Sleep -Seconds 5")).toBeUndefined();
+        expect(casaLongSleep("Start-Sleep -Milliseconds 500")).toBeUndefined();
+        expect(casaLongSleep("python sleep_report.py 600")).toBeUndefined();
+        expect(casaLongSleep("git log --grep 'sleep 600'")).toMatch(/sleeps 600 s/);
+        const ran: string[] = [];
+        const run: CasaHookRunner = async (command) => {
+            ran.push(command);
+            return { code: 0, stdout: "", stderr: "" };
+        };
+        const groups = parseCasaHooks(SETTINGS);
+        expect(await casaHookRefusal(groups, { toolName: "PowerShell", command: "Start-Sleep 900" }, "a1", run))
+            .toMatch(/short sleeps/);
+        expect(ran).toEqual([]);
     });
 
     it("runs a real hook process with the call on stdin and reads its refusal", async () => {

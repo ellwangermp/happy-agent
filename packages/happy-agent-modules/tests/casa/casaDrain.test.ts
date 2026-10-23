@@ -28,6 +28,12 @@ describe("casa: a burst of MCP sends is not a leak", () => {
         }
     });
 
+    it("tags the server stdin with the server name for the overflow line", () => {
+        const { stdin, transport: t } = transport();
+        casaRaiseMcpStdinCeiling(t, "qg-whatsapp");
+        expect((stdin as unknown as { casaMcpServer?: string }).casaMcpServer).toBe("qg-whatsapp");
+    });
+
     it("still keeps a ceiling, and leaves other transports alone", () => {
         const { stdin, transport: t } = transport();
         casaRaiseMcpStdinCeiling(t);

@@ -3,7 +3,7 @@
 import { AgentDaemonError } from "./lifecycle/AgentDaemonError.js";
 import { getDaemonIdentity } from "./lifecycle/getDaemonIdentity.js";
 import { isAgentDaemonCommand, runAgentDaemonCommand } from "./lifecycle/runAgentDaemonCommand.js";
-import { installListenerOverflowReport } from "./casaAvisos.js";
+import { installListenerOverflowReport, installMemoryReport } from "./casaAvisos.js";
 
 /**
  * The `happy-agent` command line: the Happy agent is its own daemon and owns its whole boot
@@ -44,6 +44,8 @@ Commands:
 installFailureReporting();
 // Casa fork: the listener-overflow warning names its stream (casaAvisos.ts).
 installListenerOverflowReport();
+// Casa fork: a memory line every 10 minutes, the JavaScript heap apart from the rest (casaAvisos.ts).
+installMemoryReport();
 
 void main().catch(reportFailure);
 

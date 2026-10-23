@@ -87,7 +87,7 @@ export class McpClientConnection {
             await client.connect(transport as unknown as Transport, {
                 timeout: config.startupTimeoutMs ?? DEFAULT_STARTUP_TIMEOUT_MS,
             });
-            casaRaiseMcpStdinCeiling(transport); // Casa fork: a burst of sends is not a leak (casaDrain.ts).
+            casaRaiseMcpStdinCeiling(transport, name); // Casa fork: a burst of sends is not a leak (casaDrain.ts).
             return connection;
         } catch (error) {
             await client.close().catch(() => undefined);
